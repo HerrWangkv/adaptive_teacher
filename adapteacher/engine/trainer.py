@@ -14,6 +14,7 @@ from detectron2.engine import DefaultTrainer, SimpleTrainer, TrainerBase
 from detectron2.engine.train_loop import AMPTrainer
 from detectron2.utils.events import EventStorage
 from detectron2.evaluation import verify_results, DatasetEvaluators
+
 # from detectron2.evaluation import COCOEvaluator, verify_results, DatasetEvaluators
 
 from detectron2.data.dataset_mapper import DatasetMapper
@@ -166,12 +167,14 @@ class BaselineTrainer(DefaultTrainer):
         evaluator_type = MetadataCatalog.get(dataset_name).evaluator_type
 
         if evaluator_type == "coco":
-            evaluator_list.append(COCOEvaluator(
-                dataset_name, output_dir=output_folder))
+            evaluator_list.append(COCOEvaluator(dataset_name, output_dir=output_folder))
         elif evaluator_type == "pascal_voc":
             return PascalVOCDetectionEvaluator(dataset_name)
         elif evaluator_type == "pascal_voc_water":
-            return PascalVOCDetectionEvaluator(dataset_name, target_classnames=["bicycle", "bird", "car", "cat", "dog", "person"])
+            return PascalVOCDetectionEvaluator(
+                dataset_name,
+                target_classnames=["bicycle", "bird", "car", "cat", "dog", "person"],
+            )
         if len(evaluator_list) == 0:
             raise NotImplementedError(
                 "no Evaluator for the dataset {} with the type {}".format(
@@ -210,14 +213,16 @@ class BaselineTrainer(DefaultTrainer):
         ret = [
             hooks.IterationTimer(),
             hooks.LRScheduler(self.optimizer, self.scheduler),
-            hooks.PreciseBN(
-                cfg.TEST.EVAL_PERIOD,
-                self.model,
-                self.build_train_loader(cfg),
-                cfg.TEST.PRECISE_BN.NUM_ITER,
-            )
-            if cfg.TEST.PRECISE_BN.ENABLED and get_bn_modules(self.model)
-            else None,
+            (
+                hooks.PreciseBN(
+                    cfg.TEST.EVAL_PERIOD,
+                    self.model,
+                    self.build_train_loader(cfg),
+                    cfg.TEST.PRECISE_BN.NUM_ITER,
+                )
+                if cfg.TEST.PRECISE_BN.ENABLED and get_bn_modules(self.model)
+                else None
+            ),
         ]
 
         if comm.is_main_process():
@@ -253,8 +258,7 @@ class BaselineTrainer(DefaultTrainer):
 
         if comm.is_main_process():
             if "data_time" in all_metrics_dict[0]:
-                data_time = np.max([x.pop("data_time")
-                                   for x in all_metrics_dict])
+                data_time = np.max([x.pop("data_time") for x in all_metrics_dict])
                 self.storage.put_scalar("data_time", data_time)
 
             metrics_dict = {
@@ -318,9 +322,17 @@ class ATeacherTrainer(DefaultTrainer):
         self.start_iter = 0
         self.max_iter = cfg.SOLVER.MAX_ITER
         self.cfg = cfg
+        self.register_hooks(self.build_hooks())
 
-        self.probe = OpenMatchTrainerProbe(cfg)
-        self.register_hooks(self.build_hooks()) 
+        # merlin to save memeory
+        def inplace_relu(m):
+            classname = m.__class__.__name__
+            if classname.find("ReLU") != -1:
+                m.inplace = True
+
+        # self.probe = OpenMatchTrainerProbe(cfg)
+        self.model.apply(inplace_relu)
+        self.model_teacher.apply(inplace_relu)
 
     def resume_or_load(self, resume=True):
         """
@@ -356,12 +368,14 @@ class ATeacherTrainer(DefaultTrainer):
         evaluator_type = MetadataCatalog.get(dataset_name).evaluator_type
 
         if evaluator_type == "coco":
-            evaluator_list.append(COCOEvaluator(
-                dataset_name, output_dir=output_folder))
+            evaluator_list.append(COCOEvaluator(dataset_name, output_dir=output_folder))
         elif evaluator_type == "pascal_voc":
             return PascalVOCDetectionEvaluator(dataset_name)
         elif evaluator_type == "pascal_voc_water":
-            return PascalVOCDetectionEvaluator(dataset_name, target_classnames=["bicycle", "bird", "car", "cat", "dog", "person"])
+            return PascalVOCDetectionEvaluator(
+                dataset_name,
+                target_classnames=["bicycle", "bird", "car", "cat", "dog", "person"],
+            )
         if len(evaluator_list) == 0:
             raise NotImplementedError(
                 "no Evaluator for the dataset {} with the type {}".format(
@@ -475,15 +489,15 @@ class ATeacherTrainer(DefaultTrainer):
         for unlabel_datum, lab_inst in zip(unlabled_data, label):
             unlabel_datum["instances"] = lab_inst
         return unlabled_data
-    
+
     def get_label(self, label_data):
         label_list = []
         for label_datum in label_data:
             if "instances" in label_datum.keys():
                 label_list.append(copy.deepcopy(label_datum["instances"]))
-        
+
         return label_list
-    
+
     # def get_label_test(self, label_data):
     #     label_list = []
     #     for label_datum in label_data:
@@ -509,8 +523,7 @@ class ATeacherTrainer(DefaultTrainer):
 
             # input both strong and weak supervised data into model
             label_data_q.extend(label_data_k)
-            record_dict, _, _, _ = self.model(
-                label_data_q, branch="supervised")
+            record_dict, _, _, _ = self.model(label_data_q, branch="supervised")
 
             # weight losses
             loss_dict = {}
@@ -528,16 +541,14 @@ class ATeacherTrainer(DefaultTrainer):
             elif (
                 self.iter - self.cfg.SEMISUPNET.BURN_UP_STEP
             ) % self.cfg.SEMISUPNET.TEACHER_UPDATE_ITER == 0:
-                self._update_teacher_model(
-                    keep_rate=self.cfg.SEMISUPNET.EMA_KEEP_RATE)
+                self._update_teacher_model(keep_rate=self.cfg.SEMISUPNET.EMA_KEEP_RATE)
 
             record_dict = {}
 
             ######################## For probe #################################
-            # import pdb; pdb. set_trace() 
+            # import pdb; pdb. set_trace()
             gt_unlabel_k = self.get_label(unlabel_data_k)
             # gt_unlabel_q = self.get_label_test(unlabel_data_q)
-            
 
             #  0. remove unlabeled data labels
             unlabel_data_q = self.remove_label(unlabel_data_q)
@@ -553,10 +564,10 @@ class ATeacherTrainer(DefaultTrainer):
                 ) = self.model_teacher(unlabel_data_k, branch="unsup_data_weak")
 
             ######################## For probe #################################
-            # import pdb; pdb. set_trace() 
+            # import pdb; pdb. set_trace()
 
             # probe_metrics = ['compute_fp_gtoutlier', 'compute_num_box']
-            # probe_metrics = ['compute_num_box']  
+            # probe_metrics = ['compute_num_box']
             # analysis_pred, _ = self.probe.compute_num_box(gt_unlabel_k,proposals_roih_unsup_k,'pred')
             # record_dict.update(analysis_pred)
             ######################## For probe END #################################
@@ -565,19 +576,6 @@ class ATeacherTrainer(DefaultTrainer):
             cur_threshold = self.cfg.SEMISUPNET.BBOX_THRESHOLD
 
             joint_proposal_dict = {}
-            joint_proposal_dict["proposals_rpn"] = proposals_rpn_unsup_k
-            #Process pseudo labels and thresholding
-            (
-                pesudo_proposals_rpn_unsup_k,
-                nun_pseudo_bbox_rpn,
-            ) = self.process_pseudo_label(
-                proposals_rpn_unsup_k, cur_threshold, "rpn", "thresholding"
-            )
-            # analysis_pred, _ = self.probe.compute_num_box(gt_unlabel_k,pesudo_proposals_rpn_unsup_k,'pred',True)
-            # record_dict.update(analysis_pred)
-
-            joint_proposal_dict["proposals_pseudo_rpn"] = pesudo_proposals_rpn_unsup_k
-            # Pseudo_labeling for ROI head (bbox location/objectness)
             pesudo_proposals_roih_unsup_k, _ = self.process_pseudo_label(
                 proposals_roih_unsup_k, cur_threshold, "roih", "thresholding"
             )
@@ -624,9 +622,10 @@ class ATeacherTrainer(DefaultTrainer):
 
             all_domain_data = label_data_k
             # all_domain_data = label_data_k + unlabel_data_k
-            record_all_domain_data, _, _, _ = self.model(all_domain_data, branch="domain")
+            record_all_domain_data, _, _, _ = self.model(
+                all_domain_data, branch="domain"
+            )
             record_dict.update(record_all_domain_data)
-
 
             # weight losses
             loss_dict = {}
@@ -637,15 +636,16 @@ class ATeacherTrainer(DefaultTrainer):
                         loss_dict[key] = record_dict[key] * 0
                     elif key[-6:] == "pseudo":  # unsupervised loss
                         loss_dict[key] = (
-                            record_dict[key] *
-                            self.cfg.SEMISUPNET.UNSUP_LOSS_WEIGHT
+                            record_dict[key] * self.cfg.SEMISUPNET.UNSUP_LOSS_WEIGHT
                         )
                     elif (
                         key == "loss_D_img_s" or key == "loss_D_img_t"
                     ):  # set weight for discriminator
                         # import pdb
                         # pdb.set_trace()
-                        loss_dict[key] = record_dict[key] * self.cfg.SEMISUPNET.DIS_LOSS_WEIGHT #Need to modify defaults and yaml
+                        loss_dict[key] = (
+                            record_dict[key] * self.cfg.SEMISUPNET.DIS_LOSS_WEIGHT
+                        )  # Need to modify defaults and yaml
                     else:  # supervised loss
                         loss_dict[key] = record_dict[key] * 1
 
@@ -675,8 +675,7 @@ class ATeacherTrainer(DefaultTrainer):
             if "data_time" in all_metrics_dict[0]:
                 # data_time among workers can have high variance. The actual latency
                 # caused by data_time is the maximum among workers.
-                data_time = np.max([x.pop("data_time")
-                                   for x in all_metrics_dict])
+                data_time = np.max([x.pop("data_time") for x in all_metrics_dict])
                 self.storage.put_scalar("data_time", data_time)
 
             # average the rest metrics
@@ -710,8 +709,7 @@ class ATeacherTrainer(DefaultTrainer):
         for key, value in self.model_teacher.state_dict().items():
             if key in student_model_dict.keys():
                 new_teacher_dict[key] = (
-                    student_model_dict[key] *
-                    (1 - keep_rate) + value * keep_rate
+                    student_model_dict[key] * (1 - keep_rate) + value * keep_rate
                 )
             else:
                 raise Exception("{} is not found in student model".format(key))
@@ -741,16 +739,18 @@ class ATeacherTrainer(DefaultTrainer):
         ret = [
             hooks.IterationTimer(),
             hooks.LRScheduler(self.optimizer, self.scheduler),
-            hooks.PreciseBN(
-                # Run at the same freq as (but before) evaluation.
-                cfg.TEST.EVAL_PERIOD,
-                self.model,
-                # Build a new data loader to not affect training
-                self.build_train_loader(cfg),
-                cfg.TEST.PRECISE_BN.NUM_ITER,
-            )
-            if cfg.TEST.PRECISE_BN.ENABLED and get_bn_modules(self.model)
-            else None,
+            (
+                hooks.PreciseBN(
+                    # Run at the same freq as (but before) evaluation.
+                    cfg.TEST.EVAL_PERIOD,
+                    self.model,
+                    # Build a new data loader to not affect training
+                    self.build_train_loader(cfg),
+                    cfg.TEST.PRECISE_BN.NUM_ITER,
+                )
+                if cfg.TEST.PRECISE_BN.ENABLED and get_bn_modules(self.model)
+                else None
+            ),
         ]
 
         # Do PreciseBN before checkpointer, because it updates the model and need to
@@ -773,14 +773,11 @@ class ATeacherTrainer(DefaultTrainer):
             return _last_eval_results_student
 
         def test_and_save_results_teacher():
-            self._last_eval_results_teacher = self.test(
-                self.cfg, self.model_teacher)
+            self._last_eval_results_teacher = self.test(self.cfg, self.model_teacher)
             return self._last_eval_results_teacher
 
-        ret.append(hooks.EvalHook(cfg.TEST.EVAL_PERIOD,
-                   test_and_save_results_student))
-        ret.append(hooks.EvalHook(cfg.TEST.EVAL_PERIOD,
-                   test_and_save_results_teacher))
+        ret.append(hooks.EvalHook(cfg.TEST.EVAL_PERIOD, test_and_save_results_student))
+        ret.append(hooks.EvalHook(cfg.TEST.EVAL_PERIOD, test_and_save_results_teacher))
 
         if comm.is_main_process():
             # run writers in the end, so that evaluation metrics are written
