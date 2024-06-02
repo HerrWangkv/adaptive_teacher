@@ -349,7 +349,7 @@ class ATeacherTrainer(DefaultTrainer):
         checkpoint = self.checkpointer.resume_or_load(
             self.cfg.MODEL.WEIGHTS, resume=resume
         )
-        if resume and self.checkpointer.has_checkpoint():
+        if resume:
             self.start_iter = checkpoint.get("iteration", -1) + 1
             # The checkpoint stores the training iteration that just finished, thus we start
             # at the next iteration (or iter zero if there's no checkpoint).
@@ -599,9 +599,13 @@ class ATeacherTrainer(DefaultTrainer):
             )
             record_dict.update(record_all_label_data)
 
-            # 5. input strongly augmented unlabeled data into model
+            # 5. attack student model
+            pertubation = self.model(all_unlabel_data, branch="attack")
+            pertubation *= self.cfg.SEMISUPNET.ATTACK_SEVERITY
+
+            # 6. input strongly augmented unlabeled data into model
             record_all_unlabel_data, _, _, _ = self.model(
-                all_unlabel_data, branch="supervised_target"
+                all_unlabel_data, branch="supervised_target", pertubation=pertubation
             )
             new_record_all_unlabel_data = {}
             for key in record_all_unlabel_data.keys():
@@ -610,7 +614,7 @@ class ATeacherTrainer(DefaultTrainer):
                 ]
             record_dict.update(new_record_all_unlabel_data)
 
-            # 6. input weakly labeled data (source) and weakly unlabeled data (target) to student model
+            # 7. input weakly labeled data (source) and weakly unlabeled data (target) to student model
             # give sign to the target data
 
             for i_index in range(len(unlabel_data_k)):

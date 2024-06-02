@@ -39,6 +39,7 @@ def add_ateacher_config(cfg):
     _C.SEMISUPNET.LOSS_WEIGHT_TYPE = "standard"
     _C.SEMISUPNET.DIS_TYPE = "res4"
     _C.SEMISUPNET.DIS_LOSS_WEIGHT = 0.1
+    _C.SEMISUPNET.ATTACK_SEVERITY = 0.1
 
     # dataloader
     # supervision level

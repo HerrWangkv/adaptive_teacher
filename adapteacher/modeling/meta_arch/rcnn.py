@@ -7,6 +7,7 @@ from torch.nn import functional as F
 from detectron2.modeling.meta_arch.build import META_ARCH_REGISTRY
 from detectron2.modeling.meta_arch.rcnn import GeneralizedRCNN
 from detectron2.config import configurable
+
 # from detectron2.modeling.meta_arch.build import META_ARCH_REGISTRY
 # from detectron2.modeling.meta_arch.rcnn import GeneralizedRCNN
 import logging
@@ -17,6 +18,7 @@ from detectron2.modeling.backbone import build_backbone, Backbone
 from detectron2.modeling.roi_heads import build_roi_heads
 from detectron2.utils.events import get_event_storage
 from detectron2.structures import ImageList
+
 
 ############### Image discriminator ##############
 class FCDiscriminator_img(nn.Module):
@@ -39,7 +41,10 @@ class FCDiscriminator_img(nn.Module):
         x = self.leaky_relu(x)
         x = self.classifier(x)
         return x
+
+
 #################################
+
 
 ################ Gradient reverse function
 class GradReverse(torch.autograd.Function):
@@ -51,10 +56,13 @@ class GradReverse(torch.autograd.Function):
     def backward(ctx, grad_output):
         return grad_output.neg()
 
+
 def grad_reverse(x):
     return GradReverse.apply(x)
 
+
 #######################
+
 
 @META_ARCH_REGISTRY.register()
 class DAobjTwoStagePseudoLabGeneralizedRCNN(GeneralizedRCNN):
@@ -91,9 +99,13 @@ class DAobjTwoStagePseudoLabGeneralizedRCNN(GeneralizedRCNN):
         self.input_format = input_format
         self.vis_period = vis_period
         if vis_period > 0:
-            assert input_format is not None, "input_format is required for visualization!"
+            assert (
+                input_format is not None
+            ), "input_format is required for visualization!"
 
-        self.register_buffer("pixel_mean", torch.tensor(pixel_mean).view(-1, 1, 1), False)
+        self.register_buffer(
+            "pixel_mean", torch.tensor(pixel_mean).view(-1, 1, 1), False
+        )
         self.register_buffer("pixel_std", torch.tensor(pixel_std).view(-1, 1, 1), False)
         assert (
             self.pixel_mean.shape == self.pixel_std.shape
@@ -103,19 +115,28 @@ class DAobjTwoStagePseudoLabGeneralizedRCNN(GeneralizedRCNN):
         self.dis_type = dis_type
         self.D_img = None
         # self.D_img = FCDiscriminator_img(self.backbone._out_feature_channels['res4']) # Need to know the channel
-        
+
         # self.D_img = None
-        self.D_img = FCDiscriminator_img(self.backbone._out_feature_channels[self.dis_type]) # Need to know the channel
+        self.D_img = FCDiscriminator_img(
+            self.backbone._out_feature_channels[self.dis_type]
+        )  # Need to know the channel
         # self.bceLoss_func = nn.BCEWithLogitsLoss()
+
     def build_discriminator(self):
-        self.D_img = FCDiscriminator_img(self.backbone._out_feature_channels[self.dis_type]).to(self.device) # Need to know the channel
+        self.D_img = FCDiscriminator_img(
+            self.backbone._out_feature_channels[self.dis_type]
+        ).to(
+            self.device
+        )  # Need to know the channel
 
     @classmethod
     def from_config(cls, cfg):
         backbone = build_backbone(cfg)
         return {
             "backbone": backbone,
-            "proposal_generator": build_proposal_generator(cfg, backbone.output_shape()),
+            "proposal_generator": build_proposal_generator(
+                cfg, backbone.output_shape()
+            ),
             "roi_heads": build_roi_heads(cfg, backbone.output_shape()),
             "input_format": cfg.INPUT.FORMAT,
             "vis_period": cfg.VIS_PERIOD,
@@ -140,7 +161,12 @@ class DAobjTwoStagePseudoLabGeneralizedRCNN(GeneralizedRCNN):
         return images, images_t
 
     def forward(
-        self, batched_inputs, branch="supervised", given_proposals=None, val_mode=False
+        self,
+        batched_inputs,
+        branch="supervised",
+        given_proposals=None,
+        val_mode=False,
+        pertubation=None,
     ):
         """
         Args:
@@ -183,17 +209,27 @@ class DAobjTwoStagePseudoLabGeneralizedRCNN(GeneralizedRCNN):
 
             # import pdb
             # pdb.set_trace()
-           
+
             features_s = grad_reverse(features[self.dis_type])
             D_img_out_s = self.D_img(features_s)
-            loss_D_img_s = F.binary_cross_entropy_with_logits(D_img_out_s, torch.FloatTensor(D_img_out_s.data.size()).fill_(source_label).to(self.device))
+            loss_D_img_s = F.binary_cross_entropy_with_logits(
+                D_img_out_s,
+                torch.FloatTensor(D_img_out_s.data.size())
+                .fill_(source_label)
+                .to(self.device),
+            )
 
             features_t = self.backbone(images_t.tensor)
-            
+
             features_t = grad_reverse(features_t[self.dis_type])
             # features_t = grad_reverse(features_t['p2'])
             D_img_out_t = self.D_img(features_t)
-            loss_D_img_t = F.binary_cross_entropy_with_logits(D_img_out_t, torch.FloatTensor(D_img_out_t.data.size()).fill_(target_label).to(self.device))
+            loss_D_img_t = F.binary_cross_entropy_with_logits(
+                D_img_out_t,
+                torch.FloatTensor(D_img_out_t.data.size())
+                .fill_(target_label)
+                .to(self.device),
+            )
 
             # import pdb
             # pdb.set_trace()
@@ -205,7 +241,10 @@ class DAobjTwoStagePseudoLabGeneralizedRCNN(GeneralizedRCNN):
 
         # self.D_img.eval()
         images = self.preprocess_image(batched_inputs)
-
+        if pertubation is not None:
+            images.tensor = self.clip(images.tensor, pertubation)
+        if branch == "attack":
+            images.tensor.requires_grad_(True)
         if "instances" in batched_inputs[0]:
             gt_instances = [x["instances"].to(self.device) for x in batched_inputs]
         else:
@@ -217,9 +256,13 @@ class DAobjTwoStagePseudoLabGeneralizedRCNN(GeneralizedRCNN):
         if branch == "supervised":
             features_s = grad_reverse(features[self.dis_type])
             D_img_out_s = self.D_img(features_s)
-            loss_D_img_s = F.binary_cross_entropy_with_logits(D_img_out_s, torch.FloatTensor(D_img_out_s.data.size()).fill_(source_label).to(self.device))
+            loss_D_img_s = F.binary_cross_entropy_with_logits(
+                D_img_out_s,
+                torch.FloatTensor(D_img_out_s.data.size())
+                .fill_(source_label)
+                .to(self.device),
+            )
 
-            
             # Region proposal network
             proposals_rpn, proposal_losses = self.proposal_generator(
                 images, features, gt_instances
@@ -244,7 +287,7 @@ class DAobjTwoStagePseudoLabGeneralizedRCNN(GeneralizedRCNN):
             losses = {}
             losses.update(detector_losses)
             losses.update(proposal_losses)
-            losses["loss_D_img_s"] = loss_D_img_s*0.001
+            losses["loss_D_img_s"] = loss_D_img_s * 0.001
             return losses, [], [], None
 
         elif branch == "supervised_target":
@@ -253,7 +296,6 @@ class DAobjTwoStagePseudoLabGeneralizedRCNN(GeneralizedRCNN):
             # D_img_out_t = self.D_img(features_t)
             # loss_D_img_t = F.binary_cross_entropy_with_logits(D_img_out_t, torch.FloatTensor(D_img_out_t.data.size()).fill_(target_label).to(self.device))
 
-            
             # Region proposal network
             proposals_rpn, proposal_losses = self.proposal_generator(
                 images, features, gt_instances
@@ -308,9 +350,26 @@ class DAobjTwoStagePseudoLabGeneralizedRCNN(GeneralizedRCNN):
             #         self.visualize_training(batched_inputs, proposals_rpn, branch)
 
             return {}, proposals_rpn, proposals_roih, ROI_predictions
-        elif branch == "unsup_data_strong":
-            raise NotImplementedError()
-        elif branch == "val_loss":
+
+        elif branch == "attack":
+            proposals_rpn, proposal_losses = self.proposal_generator(
+                images, features, gt_instances
+            )
+            _, detector_losses = self.roi_heads(
+                images,
+                features,
+                proposals_rpn,
+                compute_loss=True,
+                targets=gt_instances,
+                branch=branch,
+            )
+            losses = sum(proposal_losses.values()) + sum(detector_losses.values())
+            grad = torch.autograd.grad(
+                losses, images.tensor, retain_graph=False, create_graph=False
+            )
+            return grad[0].sign()
+
+        else:
             raise NotImplementedError()
 
     def visualize_training(self, batched_inputs, proposals, branch=""):
@@ -356,6 +415,20 @@ class DAobjTwoStagePseudoLabGeneralizedRCNN(GeneralizedRCNN):
             storage.put_image(vis_name, vis_img)
             break  # only visualize one image in a batch
 
+    def norm_image(self, images):
+        images = (images - self.pixel_mean.unsqueeze(0)) / self.pixel_std.unsqueeze(0)
+        return images
+
+    def denorm_image(self, images):
+        images = torch.clip(
+            images * self.pixel_std.unsqueeze(0) + self.pixel_mean.unsqueeze(0), 0, 255
+        )
+        return images
+
+    def clip(self, image, pertubation):
+        with torch.no_grad():
+            pertubed_image = self.norm_image(self.denorm_image(image + pertubation))
+        return pertubed_image
 
 
 @META_ARCH_REGISTRY.register()
@@ -430,5 +503,3 @@ class TwoStagePseudoLabGeneralizedRCNN(GeneralizedRCNN):
             losses.update(detector_losses)
             losses.update(proposal_losses)
             return losses, [], [], None
-
-
