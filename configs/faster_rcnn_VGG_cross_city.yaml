@@ -35,7 +35,7 @@ DATALOADER:
 DATASETS:
 DATASETS:
   CROSS_DATASET: True
-  TRAIN_LABEL: ("cityscapes_fine_instance_seg_train",)
+  TRAIN_LABEL: ("cityscapes_train",)
   TRAIN_UNLABEL: ("cityscapes_foggy_train",)
   TEST: ("cityscapes_foggy_val",)
 SEMISUPNET:

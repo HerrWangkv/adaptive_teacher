@@ -3,12 +3,16 @@ import os
 import contextlib
 from detectron2.data import DatasetCatalog, MetadataCatalog
 from fvcore.common.timer import Timer
+
 # from fvcore.common.file_io import PathManager
 from iopath.common.file_io import PathManager
 
 from detectron2.data.datasets.pascal_voc import register_pascal_voc
 from detectron2.data.datasets.builtin_meta import _get_builtin_metadata
-from .cityscapes_foggy import load_cityscapes_instances
+from detectron2.data.datasets.cityscapes import load_cityscapes_instances
+from .cityscapes_foggy import (
+    load_cityscapes_instances as load_foggy_cityscapes_instances,
+)
 import io
 import logging
 
@@ -110,20 +114,73 @@ _root = os.getenv("DETECTRON2_DATASETS", "datasets")
 register_coco_unlabel(_root)
 
 
-# ==== Predefined splits for raw cityscapes foggy images ===========
 _RAW_CITYSCAPES_SPLITS = {
+    "cityscapes_train": (
+        "/mrtstorage/datasets_tmp/CDOD_kwang_till_2025/cityscapes/leftImg8bit/train/",
+        "/mrtstorage/datasets_tmp/CDOD_kwang_till_2025/cityscapes/gtFine/train/",
+    ),
+    "cityscapes_val": (
+        "/mrtstorage/datasets_tmp/CDOD_kwang_till_2025/cityscapes/leftImg8bit/val/",
+        "/mrtstorage/datasets_tmp/CDOD_kwang_till_2025/cityscapes/gtFine/val/",
+    ),
+    "cityscapes_test": (
+        "/mrtstorage/datasets_tmp/CDOD_kwang_till_2025/cityscapes/leftImg8bit/test/",
+        "/mrtstorage/datasets_tmp/CDOD_kwang_till_2025/cityscapes/gtFine/test/",
+    ),
+}
+
+
+def register_all_cityscapes(root):
+    for key, (image_dir, gt_dir) in _RAW_CITYSCAPES_SPLITS.items():
+        meta = _get_builtin_metadata("cityscapes")
+        image_dir = os.path.join(root, image_dir)
+        gt_dir = os.path.join(root, gt_dir)
+
+        inst_key = key  # .format(task="instance_seg")
+        DatasetCatalog.register(
+            inst_key,
+            lambda x=image_dir, y=gt_dir: load_cityscapes_instances(
+                x, y, from_json=True, to_polygons=True
+            ),
+        )
+        MetadataCatalog.get(inst_key).set(
+            image_dir=image_dir,
+            gt_dir=gt_dir,
+            evaluator_type="coco",
+            **meta,
+        )
+
+        # sem_key = key.format(task="sem_seg")
+        # DatasetCatalog.register(
+        #     sem_key, lambda x=image_dir, y=gt_dir: load_cityscapes_semantic(x, y)
+        # )
+        # MetadataCatalog.get(sem_key).set(
+        #     image_dir=image_dir,
+        #     gt_dir=gt_dir,
+        #     evaluator_type="cityscapes_sem_seg",
+        #     **meta,
+        # )
+
+
+# ==== Predefined splits for raw cityscapes foggy images ===========
+_RAW_FOGGY_CITYSCAPES_SPLITS = {
     # "cityscapes_foggy_{task}_train": ("cityscape_foggy/leftImg8bit/train/", "cityscape_foggy/gtFine/train/"),
     # "cityscapes_foggy_{task}_val": ("cityscape_foggy/leftImg8bit/val/", "cityscape_foggy/gtFine/val/"),
     # "cityscapes_foggy_{task}_test": ("cityscape_foggy/leftImg8bit/test/", "cityscape_foggy/gtFine/test/"),
-    "cityscapes_foggy_train": ("cityscapes_foggy/leftImg8bit/train/", "cityscapes_foggy/gtFine/train/"),
-    "cityscapes_foggy_val": ("cityscapes_foggy/leftImg8bit/val/", "cityscapes_foggy/gtFine/val/"),
-    "cityscapes_foggy_test": ("cityscapes_foggy/leftImg8bit/test/", "cityscapes_foggy/gtFine/test/"),
+    "cityscapes_foggy_train": (
+        "/mrtstorage/datasets_tmp/CDOD_kwang_till_2025/cityscapes_foggy/leftImg8bit/train/",
+        "/mrtstorage/datasets_tmp/CDOD_kwang_till_2025/cityscapes_foggy/gtFine/train/",
+    ),
+    "cityscapes_foggy_val": (
+        "/mrtstorage/datasets_tmp/CDOD_kwang_till_2025/cityscapes_foggy/leftImg8bit/val/",
+        "/mrtstorage/datasets_tmp/CDOD_kwang_till_2025/cityscapes_foggy/gtFine/val/",
+    ),
 }
 
 
 def register_all_cityscapes_foggy(root):
     # root = "manifold://mobile_vision_dataset/tree/yujheli/dataset"
-    for key, (image_dir, gt_dir) in _RAW_CITYSCAPES_SPLITS.items():
+    for key, (image_dir, gt_dir) in _RAW_FOGGY_CITYSCAPES_SPLITS.items():
         meta = _get_builtin_metadata("cityscapes")
         image_dir = os.path.join(root, image_dir)
         gt_dir = os.path.join(root, gt_dir)
@@ -138,7 +195,7 @@ def register_all_cityscapes_foggy(root):
         # )
         DatasetCatalog.register(
             inst_key,
-            lambda x=image_dir, y=gt_dir: load_cityscapes_instances(
+            lambda x=image_dir, y=gt_dir: load_foggy_cityscapes_instances(
                 x, y, from_json=False, to_polygons=False
             ),
         )
@@ -152,6 +209,7 @@ def register_all_cityscapes_foggy(root):
             image_dir=image_dir, gt_dir=gt_dir, evaluator_type="coco", **meta
         )
 
+
 # ==== Predefined splits for Clipart (PASCAL VOC format) ===========
 def register_all_clipart(root):
     # root = "manifold://mobile_vision_dataset/tree/yujheli/dataset"
@@ -164,6 +222,7 @@ def register_all_clipart(root):
         register_pascal_voc(name, os.path.join(root, dirname), split, year)
         MetadataCatalog.get(name).evaluator_type = "pascal_voc"
         # MetadataCatalog.get(name).evaluator_type = "coco"
+
 
 # ==== Predefined splits for Watercolor (PASCAL VOC format) ===========
 def register_all_water(root):
@@ -181,7 +240,8 @@ def register_all_water(root):
         # MetadataCatalog.get(name).thing_classes = ["person", "dog","bicycle", "bird", "car", "cat"]
         # MetadataCatalog.get(name).evaluator_type = "coco"
 
+
+register_all_cityscapes(_root)
 register_all_cityscapes_foggy(_root)
 register_all_clipart(_root)
 register_all_water(_root)
-
