@@ -1,38 +1,24 @@
 _BASE_: "./Base-RCNN-C4.yaml"
 MODEL:
-  # META_ARCHITECTURE: "TwoStagePseudoLabGeneralizedRCNN"
   META_ARCHITECTURE: "DAobjTwoStagePseudoLabGeneralizedRCNN"
   BACKBONE:
     NAME: "build_vgg_backbone"
-  MASK_ON: False
-  RESNETS:
-    DEPTH: 101
   PROPOSAL_GENERATOR:
     NAME: "PseudoLabRPN"
-  # RPN:
-  #   POSITIVE_FRACTION: 0.25
   RPN:
-    IN_FEATURES: ["vgg4"]
+    IN_FEATURES: ["vgg_block5"]
   ROI_HEADS:
     NAME: "StandardROIHeadsPseudoLab"
-    LOSS: "CrossEntropy" # variant: "CrossEntropy"
     NUM_CLASSES: 8
-    IN_FEATURES: ["vgg4"]
-  ROI_BOX_HEAD:
-    NAME: "FastRCNNConvFCHead"
-    NUM_FC: 2
-    POOLER_RESOLUTION: 7
+    IN_FEATURES: ["vgg_block5"]
 SOLVER:
-  LR_SCHEDULER_NAME: "WarmupTwoStageMultiStepLR"
-  STEPS: (60000, 80000, 90000, 360000)
-  FACTOR_LIST: (1, 1, 1, 1, 1)
-  MAX_ITER: 100000
+  STEPS: (30000,)
+  MAX_ITER: 30000
   IMG_PER_BATCH_LABEL: 16
   IMG_PER_BATCH_UNLABEL: 16
-  BASE_LR: 0.04
-DATALOADER:
-  SUP_PERCENT: 100.0
-DATASETS:
+  BASE_LR: 0.016
+  WARMUP_ITERS: 500
+  CHECKPOINT_PERIOD: 2000
 DATASETS:
   CROSS_DATASET: True
   TRAIN_LABEL: ("cityscapes_train",)
@@ -42,10 +28,10 @@ SEMISUPNET:
   Trainer: "ateacher"
   BBOX_THRESHOLD: 0.8
   TEACHER_UPDATE_ITER: 1
-  BURN_UP_STEP: 20000
+  BURN_UP_STEP: 4000
   EMA_KEEP_RATE: 0.9996
   UNSUP_LOSS_WEIGHT: 1.0
   SUP_LOSS_WEIGHT: 1.0
-  DIS_TYPE: "vgg4" #["concate","p2","multi"]
+  DIS_TYPE: "vgg_block5" #["concate","p2","multi"]
 TEST:
-  EVAL_PERIOD: 1000
+  EVAL_PERIOD: 500

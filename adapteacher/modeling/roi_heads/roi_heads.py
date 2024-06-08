@@ -13,7 +13,6 @@ from detectron2.modeling.roi_heads import (
     StandardROIHeads,
 )
 from detectron2.modeling.roi_heads.fast_rcnn import FastRCNNOutputLayers
-from adapteacher.modeling.roi_heads.fast_rcnn import FastRCNNFocaltLossOutputLayers
 
 import numpy as np
 from detectron2.modeling.poolers import ROIPooler
@@ -48,12 +47,7 @@ class StandardROIHeadsPseudoLab(StandardROIHeads):
                 channels=in_channels, height=pooler_resolution, width=pooler_resolution
             ),
         )
-        if cfg.MODEL.ROI_HEADS.LOSS == "CrossEntropy":
-            box_predictor = FastRCNNOutputLayers(cfg, box_head.output_shape)
-        elif cfg.MODEL.ROI_HEADS.LOSS == "FocalLoss":
-            box_predictor = FastRCNNFocaltLossOutputLayers(cfg, box_head.output_shape)
-        else:
-            raise ValueError("Unknown ROI head loss.")
+        box_predictor = FastRCNNOutputLayers(cfg, box_head.output_shape)
 
         return {
             "box_in_features": in_features,

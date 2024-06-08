@@ -9,10 +9,6 @@ def add_ateacher_config(cfg):
     _C = cfg
     _C.TEST.VAL_LOSS = True
 
-    _C.MODEL.RPN.UNSUP_LOSS_WEIGHT = 1.0
-    _C.MODEL.RPN.LOSS = "CrossEntropy"
-    _C.MODEL.ROI_HEADS.LOSS = "CrossEntropy"
-
     _C.SOLVER.IMG_PER_BATCH_LABEL = 1
     _C.SOLVER.IMG_PER_BATCH_UNLABEL = 1
     _C.SOLVER.FACTOR_LIST = (1,)
@@ -22,12 +18,11 @@ def add_ateacher_config(cfg):
     _C.DATASETS.CROSS_DATASET = True
     _C.TEST.EVALUATOR = "COCOeval"
 
-    _C.SEMISUPNET = CN()
-
-    # Output dimension of the MLP projector after `res5` block
-    _C.SEMISUPNET.MLP_DIM = 128
 
     # Semi-supervised training
+    _C.SEMISUPNET = CN()
+    # Output dimension of the MLP projector after `res5` block
+    _C.SEMISUPNET.MLP_DIM = 128
     _C.SEMISUPNET.Trainer = "ateacher"
     _C.SEMISUPNET.BBOX_THRESHOLD = 0.7
     _C.SEMISUPNET.PSEUDO_BBOX_SAMPLE = "thresholding"
@@ -41,11 +36,10 @@ def add_ateacher_config(cfg):
     _C.SEMISUPNET.DIS_LOSS_WEIGHT = 0.1
     _C.SEMISUPNET.ATTACK_SEVERITY = 0.1
 
-    # dataloader
-    # supervision level
-    _C.DATALOADER.SUP_PERCENT = 100.0  # 5 = 5% dataset as labeled set
-    _C.DATALOADER.RANDOM_DATA_SEED = 0  # random seed to read data
-    _C.DATALOADER.RANDOM_DATA_SEED_PATH = "dataseed/COCO_supervision.txt"
-
-    _C.EMAMODEL = CN()
-    _C.EMAMODEL.SUP_CONSIST = True
+    # VGG
+    _C.MODEL.VGG = CN()
+    _C.MODEL.VGG.DEPTH = 16
+    _C.MODEL.VGG.OUT_FEATURES = ["vgg_block5"]
+    _C.MODEL.VGG.NORM = "BN"
+    _C.MODEL.VGG.CONV5_OUT_CHANNELS = 512
+    _C.MODEL.VGG.PRETRAIN = "./vgg16_caffe.pth"

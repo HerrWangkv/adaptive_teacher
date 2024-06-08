@@ -5,6 +5,10 @@ MODEL:
     POST_NMS_TOPK_TEST: 1000
   ROI_HEADS:
     NAME: "Res5ROIHeads"
+  ROI_BOX_HEAD:
+    NAME: "FastRCNNConvFCHead"
+    NUM_FC: 2
+    POOLER_RESOLUTION: 7
 DATASETS:
   TRAIN: ("coco_2017_train",)
   TEST: ("coco_2017_val",)
