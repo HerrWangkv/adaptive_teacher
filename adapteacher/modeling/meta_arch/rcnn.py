@@ -166,7 +166,6 @@ class DAobjTwoStagePseudoLabGeneralizedRCNN(GeneralizedRCNN):
         branch="supervised",
         given_proposals=None,
         val_mode=False,
-        pertubation=None,
     ):
         """
         Args:
@@ -241,10 +240,6 @@ class DAobjTwoStagePseudoLabGeneralizedRCNN(GeneralizedRCNN):
 
         # self.D_img.eval()
         images = self.preprocess_image(batched_inputs)
-        if pertubation is not None:
-            images.tensor = self.clip(images.tensor, pertubation)
-        if branch == "attack":
-            images.tensor.requires_grad_(True)
         if "instances" in batched_inputs[0]:
             gt_instances = [x["instances"].to(self.device) for x in batched_inputs]
         else:
@@ -278,11 +273,11 @@ class DAobjTwoStagePseudoLabGeneralizedRCNN(GeneralizedRCNN):
                 branch=branch,
             )
 
-            # visualization
-            if self.vis_period > 0:
-                storage = get_event_storage()
-                if storage.iter % self.vis_period == 0:
-                    self.visualize_training(batched_inputs, proposals_rpn, branch)
+            # # visualization
+            # if self.vis_period > 0:
+            #     storage = get_event_storage()
+            #     if storage.iter % self.vis_period == 0:
+            #         self.visualize_training(batched_inputs, proposals_rpn, branch)
 
             losses = {}
             losses.update(detector_losses)
@@ -311,11 +306,11 @@ class DAobjTwoStagePseudoLabGeneralizedRCNN(GeneralizedRCNN):
                 branch=branch,
             )
 
-            # visualization
-            if self.vis_period > 0:
-                storage = get_event_storage()
-                if storage.iter % self.vis_period == 0:
-                    self.visualize_training(batched_inputs, proposals_rpn, branch)
+            # # visualization
+            # if self.vis_period > 0:
+            #     storage = get_event_storage()
+            #     if storage.iter % self.vis_period == 0:
+            #         self.visualize_training(batched_inputs, proposals_rpn, branch)
 
             losses = {}
             losses.update(detector_losses)
@@ -350,20 +345,278 @@ class DAobjTwoStagePseudoLabGeneralizedRCNN(GeneralizedRCNN):
             #         self.visualize_training(batched_inputs, proposals_rpn, branch)
 
             return {}, proposals_rpn, proposals_roih, ROI_predictions
+        else:
+            raise NotImplementedError()
+
+    # def visualize_training(self, batched_inputs, proposals, branch=""):
+    #     """
+    #     This function different from the original one:
+    #     - it adds "branch" to the `vis_name`.
+
+    #     A function used to visualize images and proposals. It shows ground truth
+    #     bounding boxes on the original image and up to 20 predicted object
+    #     proposals on the original image. Users can implement different
+    #     visualization functions for different models.
+
+    #     Args:
+    #         batched_inputs (list): a list that contains input to the model.
+    #         proposals (list): a list that contains predicted proposals. Both
+    #             batched_inputs and proposals should have the same length.
+    #     """
+    #     from detectron2.utils.visualizer import Visualizer
+
+    #     storage = get_event_storage()
+    #     max_vis_prop = 20
+
+    #     for input, prop in zip(batched_inputs, proposals):
+    #         img = input["image"]
+    #         img = convert_image_to_rgb(img.permute(1, 2, 0), self.input_format)
+    #         v_gt = Visualizer(img, None)
+    #         v_gt = v_gt.overlay_instances(boxes=input["instances"].gt_boxes)
+    #         anno_img = v_gt.get_image()
+    #         box_size = min(len(prop.proposal_boxes), max_vis_prop)
+    #         v_pred = Visualizer(img, None)
+    #         v_pred = v_pred.overlay_instances(
+    #             boxes=prop.proposal_boxes[0:box_size].tensor.cpu().numpy()
+    #         )
+    #         prop_img = v_pred.get_image()
+    #         vis_img = np.concatenate((anno_img, prop_img), axis=1)
+    #         vis_img = vis_img.transpose(2, 0, 1)
+    #         vis_name = (
+    #             "Left: GT bounding boxes "
+    #             + branch
+    #             + ";  Right: Predicted proposals "
+    #             + branch
+    #         )
+    #         storage.put_image(vis_name, vis_img)
+    #         break  # only visualize one image in a batch
+
+@META_ARCH_REGISTRY.register()
+class TargetedAttackedGeneralizedRCNN(GeneralizedRCNN):
+
+    @configurable
+    def __init__(
+        self,
+        dis_type: str,
+        **kwargs
+    ):
+        """
+        Args:
+            backbone: a backbone module, must follow detectron2's backbone interface
+            proposal_generator: a module that generates proposals using backbone features
+            roi_heads: a ROI head that performs per-region computation
+            pixel_mean, pixel_std: list or tuple with #channels element, representing
+                the per-channel mean and std to be used to normalize the input image
+            input_format: describe the meaning of channels of input. Needed by visualization
+            vis_period: the period to run visualization. Set to 0 to disable.
+        """
+        super().__init__(**kwargs)
+
+        self.dis_type = dis_type
+        self.D_img = FCDiscriminator_img(
+            self.backbone._out_feature_channels[self.dis_type]
+        )  
+
+    @classmethod
+    def from_config(cls, cfg):
+        backbone = build_backbone(cfg)
+        return {
+            "backbone": backbone,
+            "proposal_generator": build_proposal_generator(
+                cfg, backbone.output_shape()
+            ),
+            "roi_heads": build_roi_heads(cfg, backbone.output_shape()),
+            "input_format": cfg.INPUT.FORMAT,
+            "vis_period": cfg.VIS_PERIOD,
+            "pixel_mean": cfg.MODEL.PIXEL_MEAN,
+            "pixel_std": cfg.MODEL.PIXEL_STD,
+            "dis_type": cfg.SEMISUPNET.DIS_TYPE,
+        }
+
+    def preprocess_image_train(self, batched_inputs: List[Dict[str, torch.Tensor]]):
+        """
+        Normalize, pad and batch the input images.
+        """
+        images = [x["image"].to(self.device) for x in batched_inputs]
+        images = [(x - self.pixel_mean) / self.pixel_std for x in images]
+        images = ImageList.from_tensors(images, self.backbone.size_divisibility)
+
+        images_t = [x["image_unlabeled"].to(self.device) for x in batched_inputs]
+        images_t = [(x - self.pixel_mean) / self.pixel_std for x in images_t]
+        images_t = ImageList.from_tensors(images_t, self.backbone.size_divisibility)
+
+        return images, images_t
+
+    def forward(
+        self,
+        batched_inputs,
+        branch="supervised",
+        pertubation=None,
+        ret_confusion_matrix=False,
+    ):
+        if not self.training:
+            return self.inference(batched_inputs)
+
+        source_label = 0
+        target_label = 1
+
+        if branch == "domain":
+            images_s, images_t = self.preprocess_image_train(batched_inputs)
+
+            features_s = self.backbone(images_s.tensor)
+            features_s = grad_reverse(features_s[self.dis_type])
+            D_img_out_s = self.D_img(features_s)
+            loss_D_img_s = F.binary_cross_entropy_with_logits(
+                D_img_out_s,
+                torch.FloatTensor(D_img_out_s.data.size())
+                .fill_(source_label)
+                .to(self.device),
+            )
+
+            features_t = self.backbone(images_t.tensor)
+            features_t = grad_reverse(features_t[self.dis_type])
+            D_img_out_t = self.D_img(features_t)
+            loss_D_img_t = F.binary_cross_entropy_with_logits(
+                D_img_out_t,
+                torch.FloatTensor(D_img_out_t.data.size())
+                .fill_(target_label)
+                .to(self.device),
+            )
+
+            losses = {}
+            losses["loss_D_img_s"] = loss_D_img_s
+            losses["loss_D_img_t"] = loss_D_img_t
+            return losses
+
+        images = self.preprocess_image(batched_inputs)
+        if pertubation is not None:
+            images.tensor = self.clip(images.tensor, pertubation)
+        if branch == "attack":
+            images.tensor.requires_grad_(True)
+        if "instances" in batched_inputs[0]:
+            gt_instances = [x["instances"].to(self.device) for x in batched_inputs]
+        else:
+            gt_instances = None
+
+        features = self.backbone(images.tensor)
+
+        if branch == "supervised":
+            features_s = grad_reverse(features[self.dis_type])
+            D_img_out_s = self.D_img(features_s)
+            loss_D_img_s = F.binary_cross_entropy_with_logits(
+                D_img_out_s,
+                torch.FloatTensor(D_img_out_s.data.size())
+                .fill_(source_label)
+                .to(self.device),
+            )
+
+            # RPN
+            proposals_rpn, proposal_losses = self.proposal_generator(
+                images, features, gt_instances, branch=branch
+            )
+
+            # ROI
+            if ret_confusion_matrix:
+                _, detector_losses, confusion_matrix = self.roi_heads(
+                    images,
+                    features,
+                    proposals_rpn,
+                    gt_instances,
+                    branch=branch,
+                    ret_confusion_matrix=True,
+                )
+            else:
+                _, detector_losses = self.roi_heads(
+                    images, features, proposals_rpn, gt_instances, branch=branch
+                )
+
+            # # visualization
+            # if self.vis_period > 0:
+            #     storage = get_event_storage()
+            #     if storage.iter % self.vis_period == 0:
+            #         self.visualize_training(batched_inputs, proposals_rpn, branch)
+            losses = {}
+            losses.update(detector_losses)
+            losses.update(proposal_losses)
+            losses["loss_D_img_s"] = loss_D_img_s * 0.001
+            if ret_confusion_matrix:
+                return losses, confusion_matrix
+            return losses
+
+        elif branch == "supervised_target":
+            # RPN
+            proposals_rpn, proposal_losses = self.proposal_generator(
+                images, features, gt_instances, branch=branch
+            )
+
+            # ROI
+            if ret_confusion_matrix:
+                _, detector_losses, confusion_matrix = self.roi_heads(
+                    images,
+                    features,
+                    proposals_rpn,
+                    gt_instances,
+                    branch=branch,
+                    ret_confusion_matrix=True,
+                )
+            else:
+                _, detector_losses = self.roi_heads(
+                    images, features, proposals_rpn, gt_instances, branch=branch
+                )
+
+            # # visualization
+            # if self.vis_period > 0:
+            #     storage = get_event_storage()
+            #     if storage.iter % self.vis_period == 0:
+            #         self.visualize_training(batched_inputs, proposals_rpn, branch)
+
+            losses = {}
+            losses.update(detector_losses)
+            losses.update(proposal_losses)
+            if ret_confusion_matrix:
+                return losses, confusion_matrix
+            return losses
+
+        elif branch == "unsup_data_weak":
+            """
+            unsupervised weak branch: input image without any ground-truth label; output proposals of rpn and roi-head
+            """
+            # RPN
+            proposals_rpn, _ = self.proposal_generator(
+                images, features, None, branch=branch
+            )
+
+            # ROI
+            proposals_roih, ROI_predictions = self.roi_heads(
+                images,
+                features,
+                proposals_rpn,
+                None,
+                branch=branch,
+            )
+
+            # if self.vis_period > 0:
+            #     storage = get_event_storage()
+            #     if storage.iter % self.vis_period == 0:
+            #         self.visualize_training(batched_inputs, proposals_rpn, branch)
+
+            return proposals_roih
 
         elif branch == "attack":
+            # RPN
             proposals_rpn, proposal_losses = self.proposal_generator(
-                images, features, gt_instances
+                images, features, gt_instances, branch=branch
             )
+
+            # ROI
             _, detector_losses = self.roi_heads(
                 images,
                 features,
                 proposals_rpn,
-                compute_loss=True,
-                targets=gt_instances,
+                gt_instances,
                 branch=branch,
             )
-            losses = sum(proposal_losses.values()) + sum(detector_losses.values())
+            losses = proposal_losses["loss_rpn_cls"] + detector_losses["loss_cls"]
             grad = torch.autograd.grad(
                 losses, images.tensor, retain_graph=False, create_graph=False
             )
@@ -371,49 +624,6 @@ class DAobjTwoStagePseudoLabGeneralizedRCNN(GeneralizedRCNN):
 
         else:
             raise NotImplementedError()
-
-    def visualize_training(self, batched_inputs, proposals, branch=""):
-        """
-        This function different from the original one:
-        - it adds "branch" to the `vis_name`.
-
-        A function used to visualize images and proposals. It shows ground truth
-        bounding boxes on the original image and up to 20 predicted object
-        proposals on the original image. Users can implement different
-        visualization functions for different models.
-
-        Args:
-            batched_inputs (list): a list that contains input to the model.
-            proposals (list): a list that contains predicted proposals. Both
-                batched_inputs and proposals should have the same length.
-        """
-        from detectron2.utils.visualizer import Visualizer
-
-        storage = get_event_storage()
-        max_vis_prop = 20
-
-        for input, prop in zip(batched_inputs, proposals):
-            img = input["image"]
-            img = convert_image_to_rgb(img.permute(1, 2, 0), self.input_format)
-            v_gt = Visualizer(img, None)
-            v_gt = v_gt.overlay_instances(boxes=input["instances"].gt_boxes)
-            anno_img = v_gt.get_image()
-            box_size = min(len(prop.proposal_boxes), max_vis_prop)
-            v_pred = Visualizer(img, None)
-            v_pred = v_pred.overlay_instances(
-                boxes=prop.proposal_boxes[0:box_size].tensor.cpu().numpy()
-            )
-            prop_img = v_pred.get_image()
-            vis_img = np.concatenate((anno_img, prop_img), axis=1)
-            vis_img = vis_img.transpose(2, 0, 1)
-            vis_name = (
-                "Left: GT bounding boxes "
-                + branch
-                + ";  Right: Predicted proposals "
-                + branch
-            )
-            storage.put_image(vis_name, vis_img)
-            break  # only visualize one image in a batch
 
     def norm_image(self, images):
         images = (images - self.pixel_mean.unsqueeze(0)) / self.pixel_std.unsqueeze(0)
@@ -429,77 +639,3 @@ class DAobjTwoStagePseudoLabGeneralizedRCNN(GeneralizedRCNN):
         with torch.no_grad():
             pertubed_image = self.norm_image(self.denorm_image(image + pertubation))
         return pertubed_image
-
-
-@META_ARCH_REGISTRY.register()
-class TwoStagePseudoLabGeneralizedRCNN(GeneralizedRCNN):
-    def forward(
-        self, batched_inputs, branch="supervised", given_proposals=None, val_mode=False
-    ):
-        if (not self.training) and (not val_mode):
-            return self.inference(batched_inputs)
-
-        images = self.preprocess_image(batched_inputs)
-
-        if "instances" in batched_inputs[0]:
-            gt_instances = [x["instances"].to(self.device) for x in batched_inputs]
-        else:
-            gt_instances = None
-
-        features = self.backbone(images.tensor)
-
-        if branch == "supervised":
-            # Region proposal network
-            proposals_rpn, proposal_losses = self.proposal_generator(
-                images, features, gt_instances
-            )
-
-            # # roi_head lower branch
-            _, detector_losses = self.roi_heads(
-                images, features, proposals_rpn, gt_instances, branch=branch
-            )
-
-            losses = {}
-            losses.update(detector_losses)
-            losses.update(proposal_losses)
-            return losses, [], [], None
-
-        elif branch == "unsup_data_weak":
-            # Region proposal network
-            proposals_rpn, _ = self.proposal_generator(
-                images, features, None, compute_loss=False
-            )
-
-            # roi_head lower branch (keep this for further production)  # notice that we do not use any target in ROI head to do inference !
-            proposals_roih, ROI_predictions = self.roi_heads(
-                images,
-                features,
-                proposals_rpn,
-                targets=None,
-                compute_loss=False,
-                branch=branch,
-            )
-
-            return {}, proposals_rpn, proposals_roih, ROI_predictions
-
-        elif branch == "val_loss":
-
-            # Region proposal network
-            proposals_rpn, proposal_losses = self.proposal_generator(
-                images, features, gt_instances, compute_val_loss=True
-            )
-
-            # roi_head lower branch
-            _, detector_losses = self.roi_heads(
-                images,
-                features,
-                proposals_rpn,
-                gt_instances,
-                branch=branch,
-                compute_val_loss=True,
-            )
-
-            losses = {}
-            losses.update(detector_losses)
-            losses.update(proposal_losses)
-            return losses, [], [], None

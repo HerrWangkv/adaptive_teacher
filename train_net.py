@@ -7,10 +7,10 @@ from detectron2.config import get_cfg
 from detectron2.engine import default_argument_parser, default_setup, launch
 
 from adapteacher import add_ateacher_config
-from adapteacher.engine.trainer import ATeacherTrainer, BaselineTrainer
+from adapteacher.engine.trainer import ATeacherTrainer, TATeacherTrainer
 
 # hacky way to register
-from adapteacher.modeling.meta_arch.rcnn import TwoStagePseudoLabGeneralizedRCNN, DAobjTwoStagePseudoLabGeneralizedRCNN
+from adapteacher.modeling.meta_arch.rcnn import DAobjTwoStagePseudoLabGeneralizedRCNN, TargetedAttackedGeneralizedRCNN
 from adapteacher.modeling.meta_arch.vgg import build_vgg_backbone  # noqa
 from adapteacher.modeling.proposal_generator.rpn import PseudoLabRPN
 from adapteacher.modeling.roi_heads.roi_heads import StandardROIHeadsPseudoLab
@@ -36,13 +36,13 @@ def main(args):
     cfg = setup(args)
     if cfg.SEMISUPNET.Trainer == "ateacher":
         Trainer = ATeacherTrainer
-    elif cfg.SEMISUPNET.Trainer == "baseline":
-        Trainer = BaselineTrainer
+    elif cfg.SEMISUPNET.Trainer == "tateacher":
+        Trainer = TATeacherTrainer
     else:
         raise ValueError("Trainer Name is not found.")
 
     if args.eval_only:
-        if cfg.SEMISUPNET.Trainer == "ateacher":
+        if cfg.SEMISUPNET.Trainer in ["ateacher", "tateacher"]:
             model = Trainer.build_model(cfg)
             model_teacher = Trainer.build_model(cfg)
             ensem_ts_model = EnsembleTSModel(model_teacher, model)

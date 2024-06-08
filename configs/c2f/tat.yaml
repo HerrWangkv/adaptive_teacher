@@ -1,14 +1,14 @@
-_BASE_: "./Base-RCNN-C4.yaml"
+_BASE_: "../Base-RCNN-C4.yaml"
 MODEL:
-  META_ARCHITECTURE: "DAobjTwoStagePseudoLabGeneralizedRCNN"
+  META_ARCHITECTURE: "TargetedAttackedGeneralizedRCNN"
   BACKBONE:
     NAME: "build_vgg_backbone"
   PROPOSAL_GENERATOR:
-    NAME: "PseudoLabRPN"
+    NAME: "BgPseudoRPN"
   RPN:
     IN_FEATURES: ["vgg_block5"]
   ROI_HEADS:
-    NAME: "StandardROIHeadsPseudoLab"
+    NAME: "FgPseudoROIHeads"
     NUM_CLASSES: 8
     IN_FEATURES: ["vgg_block5"]
 SOLVER:
@@ -25,7 +25,7 @@ DATASETS:
   TRAIN_UNLABEL: ("cityscapes_foggy_train",)
   TEST: ("cityscapes_foggy_val",)
 SEMISUPNET:
-  Trainer: "ateacher"
+  Trainer: "tateacher"
   BBOX_THRESHOLD: 0.8
   TEACHER_UPDATE_ITER: 1
   BURN_UP_STEP: 4000

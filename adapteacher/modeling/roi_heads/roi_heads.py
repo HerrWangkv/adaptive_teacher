@@ -13,6 +13,7 @@ from detectron2.modeling.roi_heads import (
     StandardROIHeads,
 )
 from detectron2.modeling.roi_heads.fast_rcnn import FastRCNNOutputLayers
+from adapteacher.modeling.roi_heads.fast_rcnn import FgFastRCNNOutputLayers
 
 import numpy as np
 from detectron2.modeling.poolers import ROIPooler
@@ -182,3 +183,109 @@ class StandardROIHeadsPseudoLab(StandardROIHeads):
         )
 
         return proposals_with_gt
+
+
+@ROI_HEADS_REGISTRY.register()
+class FgPseudoROIHeads(StandardROIHeads):
+    """
+    StandardROIHeads with FgFastRCNNOutputLayers as box_predictor
+    """
+
+    @classmethod
+    def _init_box_head(cls, cfg, input_shape):
+        # fmt: off
+        in_features       = cfg.MODEL.ROI_HEADS.IN_FEATURES
+        pooler_resolution = cfg.MODEL.ROI_BOX_HEAD.POOLER_RESOLUTION
+        pooler_scales     = tuple(1.0 / input_shape[k].stride for k in in_features)
+        sampling_ratio    = cfg.MODEL.ROI_BOX_HEAD.POOLER_SAMPLING_RATIO
+        pooler_type       = cfg.MODEL.ROI_BOX_HEAD.POOLER_TYPE
+        # fmt: on
+
+        in_channels = [input_shape[f].channels for f in in_features]
+        # Check all channel counts are equal
+        assert len(set(in_channels)) == 1, in_channels
+        in_channels = in_channels[0]
+
+        box_pooler = ROIPooler(
+            output_size=pooler_resolution,
+            scales=pooler_scales,
+            sampling_ratio=sampling_ratio,
+            pooler_type=pooler_type,
+        )
+        box_head = build_box_head(
+            cfg,
+            ShapeSpec(
+                channels=in_channels, height=pooler_resolution, width=pooler_resolution
+            ),
+        )
+        box_predictor = FgFastRCNNOutputLayers(cfg, box_head.output_shape)
+
+        return {
+            "box_in_features": in_features,
+            "box_pooler": box_pooler,
+            "box_head": box_head,
+            "box_predictor": box_predictor,
+        }
+
+    def forward(
+        self,
+        images: ImageList,
+        features: Dict[str, torch.Tensor],
+        proposals: List[Instances],
+        targets: Optional[List[Instances]] = None,
+        branch: str = "",
+        ret_confusion_matrix: bool = False,
+    ) -> Tuple[List[Instances], Dict[str, torch.Tensor]]:
+        """
+        return confusion matrix if supervised
+        """
+        del images
+        if self.training and branch in ["supervised", "supervised_target", "attack"]:
+            assert targets, "'targets' argument is required during training"
+            # Targets with gt_classes -1 will be ignored
+            proposals = self.label_and_sample_proposals(proposals, targets)
+        del targets
+
+        if self.training and branch in ["supervised", "supervised_target", "attack"]:
+            if ret_confusion_matrix:
+                losses, confusion_matrix = self._forward_box(
+                    features, proposals, branch, ret_confusion_matrix
+                )
+                return proposals, losses, confusion_matrix
+            else:
+                losses = self._forward_box(features, proposals, branch)
+                return proposals, losses
+        elif not self.training or branch == "unsup_data_weak":
+            pred_instances = self._forward_box(features, proposals, branch)
+            return pred_instances, {}
+        else:
+            raise ValueError(f"Unknown branch {branch}!")
+
+    def _forward_box(
+        self,
+        features: Dict[str, torch.Tensor],
+        proposals: List[Instances],
+        branch: str,
+        ret_confusion_matrix: bool = False,
+    ):
+        """
+        return confusion matrix if required
+        """
+        features = [features[f] for f in self.box_in_features]
+        box_features = self.box_pooler(features, [x.proposal_boxes for x in proposals])
+        box_features = self.box_head(box_features)
+        predictions = self.box_predictor(box_features)
+        del box_features
+
+        if self.training and branch != "unsup_data_weak":
+            if ret_confusion_matrix:
+                losses, confusion_matrix = self.box_predictor.losses(
+                    predictions, proposals, branch, ret_confusion_matrix=True
+                )
+                return losses, confusion_matrix
+            else:
+                losses = self.box_predictor.losses(predictions, proposals, branch)
+                return losses
+        else:
+            pred_instances, _ = self.box_predictor.inference(predictions, proposals)
+            return pred_instances
