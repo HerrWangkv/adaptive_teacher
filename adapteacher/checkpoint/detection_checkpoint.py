@@ -3,7 +3,7 @@ from detectron2.checkpoint.c2_model_loading import align_and_update_state_dicts
 from detectron2.checkpoint import DetectionCheckpointer
 
 # for load_student_model
-from typing import Any
+from typing import Any, Dict
 from fvcore.common.checkpoint import _strip_prefix_if_present, _IncompatibleKeys
 
 
@@ -91,7 +91,15 @@ class DetectionTSCheckpointer(DetectionCheckpointer):
             unexpected_keys=incompatible.unexpected_keys,
             incorrect_shapes=incorrect_shapes,
         )
-
+    def resume_or_load(self, path: str, *, resume: bool = True) -> Dict[str, Any]:
+        """
+        If `resume` is True, always load checkpoint from the given path.
+        """
+        if resume:
+            return self.load(path)
+        else:
+            return self.load(path, checkpointables=[])
+        
 
 # class DetectionCheckpointer(Checkpointer):
 #     """
