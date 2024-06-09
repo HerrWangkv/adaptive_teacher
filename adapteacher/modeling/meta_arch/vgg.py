@@ -1,215 +1,154 @@
-import numpy as np
-import fvcore.nn.weight_init as weight_init
-import torch.nn.functional as F
-from torch import nn
+# Copyright (c) Facebook, Inc. and its affiliates. All Rights Reserved
+import torch.nn as nn
+import copy
 import torch
+from typing import Union, List, Dict, Any, cast
+from detectron2.modeling.backbone import (
+    ResNet,
+    Backbone,
+    build_resnet_backbone,
+    BACKBONE_REGISTRY
+)
+from detectron2.modeling.backbone.fpn import FPN, LastLevelMaxPool, LastLevelP6P7
 
-from detectron2.layers import CNNBlockBase, Conv2d, ShapeSpec, get_norm
-
-from detectron2.modeling.backbone.backbone import Backbone
-from detectron2.modeling.backbone.build import BACKBONE_REGISTRY
 
 
-cfgs = {
-    11: [64, "M", 128, "M", 256, 256, "M", 512, 512, "M", 512, 512, "M"],
-    13: [64, 64, "M", 128, 128, "M", 256, 256, "M", 512, 512, "M", 512, 512, "M"],
-    16: [64, 64, "M", 128, 128, "M", 256, 256, 256, "M", 512, 512, 512, "M", 512, 512, 512, "M"],
-    19: [64, 64, "M", 128, 128, "M", 256, 256, 256, 256, "M", 512, 512, 512, 512, "M", 512, 512, 512, 512, "M"],
+def make_layers(cfg: List[Union[str, int]], batch_norm: bool = False) -> nn.Sequential:
+    layers: List[nn.Module] = []
+    in_channels = 3
+    for v in cfg:
+        if v == 'M':
+            layers += [nn.MaxPool2d(kernel_size=2, stride=2)]
+        else:
+            v = cast(int, v)
+            conv2d = nn.Conv2d(in_channels, v, kernel_size=3, padding=1)
+            if batch_norm:
+                layers += [conv2d, nn.BatchNorm2d(v), nn.ReLU(inplace=True)]
+            else:
+                layers += [conv2d, nn.ReLU(inplace=True)]
+            in_channels = v
+    return nn.Sequential(*layers)
+
+cfgs: Dict[str, List[Union[str, int]]] = {
+    'vgg11': [64, 'M', 128, 'M', 256, 256, 'M', 512, 512, 'M', 512, 512, 'M'],
+    'vgg13': [64, 64, 'M', 128, 128, 'M', 256, 256, 'M', 512, 512, 'M', 512, 512, 'M'],
+    'vgg16': [64, 64, 'M', 128, 128, 'M', 256, 256, 256, 'M', 512, 512, 512, 'M', 512, 512, 512, 'M'],
+    'vgg19': [64, 64, 'M', 128, 128, 'M', 256, 256, 256, 256, 'M', 512, 512, 512, 512, 'M', 512, 512, 512, 512, 'M'],
 }
 
 
-class VGGBlock(CNNBlockBase):
-    def __init__(self, in_channels, channel_cfg, norm="BN", pool=True):
-        super().__init__(in_channels, channel_cfg[-1], 2)
+class vgg_backbone(Backbone):
+    """
+    Backbone (bottom-up) for FBNet.
 
-        self.convs = []
-        self.pool = pool
+    Hierarchy:
+        trunk0:
+            xif0_0
+            xif0_1
+            ...
+        trunk1:
+            xif1_0
+            xif1_1
+            ...
+        ...
 
-        for i, out_channels in enumerate(channel_cfg):
-            name = "conv" + str(i + 1)
-            conv = Conv2d(
-                in_channels,
-                out_channels,
-                kernel_size=3,
-                stride=1,
-                padding=1,
-                bias=True,
-                norm=get_norm(norm, out_channels) if norm != "None" else None,
-            )
-            in_channels = out_channels
-            setattr(self, name, conv)
-            self.convs.append(conv)
+    Output features:
+        The outputs from each "stage", i.e. trunkX.
+    """
 
-        if self.pool:
-            self.maxpool = nn.MaxPool2d(kernel_size=2, stride=2)
-
-        for layer in self.convs:
-            if layer is not None:
-                weight_init.c2_msra_fill(layer)
-
-    def forward(self, x):
-        for conv in self.convs:
-            out = conv(x)
-            out = F.relu_(out)
-            x = out
-        if self.pool:
-            out = self.maxpool(out)
-        return out
-
-
-class VGG(Backbone):
-    def __init__(self, stages, num_classes=None, out_features=None, pretrain='./vgg16_caffe.pth'):
-        """
-        """
+    def __init__(self, cfg):
         super().__init__()
-        self.num_classes = num_classes
 
-        current_stride = 1
-        self._out_feature_strides = {}
+        self.vgg = make_layers(cfgs['vgg16'],batch_norm=True)
+
+        self._initialize_weights()
+        # self.stage_names_index = {'vgg1':3, 'vgg2':8 , 'vgg3':15, 'vgg4':22, 'vgg5':29}
+        _out_feature_channels = [64, 128, 256, 512, 512]
+        _out_feature_strides = [2, 4, 8, 16, 32]
+        # stages, shape_specs = build_fbnet(
+        #     cfg,
+        #     name="trunk",
+        #     in_channels=cfg.MODEL.FBNET_V2.STEM_IN_CHANNELS
+        # )
+
+        # nn.Sequential(*list(self.vgg.features._modules.values())[:14])
+
+        self.stages = [nn.Sequential(*list(self.vgg._modules.values())[0:7]),\
+                    nn.Sequential(*list(self.vgg._modules.values())[7:14]),\
+                    nn.Sequential(*list(self.vgg._modules.values())[14:24]),\
+                    nn.Sequential(*list(self.vgg._modules.values())[24:34]),\
+                    nn.Sequential(*list(self.vgg._modules.values())[34:]),]
         self._out_feature_channels = {}
+        self._out_feature_strides = {}
+        self._stage_names = []
 
-        self.stages_and_names = []
-        for i, block in enumerate(stages):
-
-            name = "vgg_block" + str(i + 1)
-            stage = nn.Sequential(block)
-
+        for i, stage in enumerate(self.stages):
+            name = "vgg{}".format(i)
             self.add_module(name, stage)
-            self.stages_and_names.append((stage, name))
-            if name == "vgg_block5":
-                self._out_feature_strides[name] = self._out_feature_strides["vgg_block4"]
-            else:
-                self._out_feature_strides[name] = current_stride = int(
-                    current_stride * np.prod([block.stride])
-                )
-            self._out_feature_channels[name] = block.convs[-1].out_channels
+            self._stage_names.append(name)
+            self._out_feature_channels[name] = _out_feature_channels[i]
+            self._out_feature_strides[name] = _out_feature_strides[i]
 
-        if num_classes is not None:
-            self.avgpool = nn.AdaptiveAvgPool2d((7, 7))
-            self.classifier = nn.Sequential(
-                nn.Linear(512 * 7 * 7, 4096),
-                nn.ReLU(True),
-                nn.Dropout(),
-                nn.Linear(4096, 4096),
-                nn.ReLU(True),
-                nn.Dropout(),
-                nn.Linear(4096, num_classes),
-            )
+        self._out_features = self._stage_names
 
-            for m in self.classifier.modules():
-                if isinstance(m, nn.Linear):
-                    nn.init.normal_(m.weight, 0.01)
-                    # nn.init.constant_(m.bias, 0)
-                    name = "classifier"
-
-        if out_features is None:
-            out_features = [name]
-        self._out_features = out_features
-        assert len(self._out_features)
-        children = [x[0] for x in self.named_children()]
-        for out_feature in self._out_features:
-            assert out_feature in children, "Available children: {}".format(", ".join(children))
-        if True:
-            self.model_path = pretrain
-            state_dict = torch.load(self.model_path)
-            dict_map_pth = ['features.0.weight', 'features.0.bias', 'features.2.weight', 'features.2.bias',
-                            'features.5.weight', 'features.5.bias', 'features.7.weight', 'features.7.bias',
-                            'features.10.weight', 'features.10.bias', 'features.12.weight', 'features.12.bias',
-                            'features.14.weight', 'features.14.bias', 'features.17.weight', 'features.17.bias',
-                            'features.19.weight', 'features.19.bias', 'features.21.weight', 'features.21.bias',
-                            'features.24.weight', 'features.24.bias', 'features.26.weight', 'features.26.bias',
-                            'features.28.weight', 'features.28.bias']
-            dict_map_model = ['vgg_block1.0.conv1.weight', 'vgg_block1.0.conv1.bias', 'vgg_block1.0.conv2.weight',
-                              'vgg_block1.0.conv2.bias', 'vgg_block2.0.conv1.weight', 'vgg_block2.0.conv1.bias',
-                              'vgg_block2.0.conv2.weight', 'vgg_block2.0.conv2.bias', 'vgg_block3.0.conv1.weight',
-                              'vgg_block3.0.conv1.bias', 'vgg_block3.0.conv2.weight', 'vgg_block3.0.conv2.bias',
-                              'vgg_block3.0.conv3.weight', 'vgg_block3.0.conv3.bias', 'vgg_block4.0.conv1.weight',
-                              'vgg_block4.0.conv1.bias', 'vgg_block4.0.conv2.weight', 'vgg_block4.0.conv2.bias',
-                              'vgg_block4.0.conv3.weight', 'vgg_block4.0.conv3.bias', 'vgg_block5.0.conv1.weight',
-                              'vgg_block5.0.conv1.bias', 'vgg_block5.0.conv2.weight', 'vgg_block5.0.conv2.bias',
-                              'vgg_block5.0.conv3.weight', 'vgg_block5.0.conv3.bias']
-            assert len(dict_map_pth) == len(dict_map_model)
-            state_dict_new = {}
-            for i in range(len(dict_map_pth)):
-                state_dict_new['{}'.format(dict_map_model[i])] = state_dict['{}'.format(dict_map_pth[i])]
-            self.load_state_dict({k: v for k, v in state_dict_new.items() if
-                                  k in self.state_dict()}, strict=False)
-            print('-------- pretrained model loaded ---------')
+        del self.vgg
 
     def forward(self, x):
-        outputs = {}
-        for stage, name in self.stages_and_names:
+        features = {}
+        for name, stage in zip(self._stage_names, self.stages):
             x = stage(x)
-            if name in self._out_features:
-                outputs[name] = x
-        if self.num_classes is not None:
-            x = self.avgpool(x)
-            x = self.classifier(x)
-            if "classifer" in self._out_features:
-                outputs["classifer"] = x
-        return outputs
+            # if name in self._out_features:
+            #     outputs[name] = x
+            features[name] = x
+        # import pdb
+        # pdb.set_trace()
 
-    def output_shape(self):
-        return {
-            name: ShapeSpec(
-                channels=self._out_feature_channels[name], stride=self._out_feature_strides[name]
-            )
-            for name in self._out_features
-        }
+        return features
 
-    def freeze(self, freeze_at=0):
-        for idx, (stage, _) in enumerate(self.stages_and_names, start=1):
-            if freeze_at >= idx:
-                for block in stage.children():
-                    block.freeze()
-        return self
-
-    @staticmethod
-    def make_stage(block_class, in_channels, channel_cfg, **kwargs):
-        assert "stride" not in kwargs, "Stride of blocks in make_stage cannot be changed."
-        blocks = block_class(in_channels=in_channels, channel_cfg=channel_cfg, **kwargs)
-        return blocks
+    def _initialize_weights(self) -> None:
+        for m in self.modules():
+            if isinstance(m, nn.Conv2d):
+                nn.init.kaiming_normal_(m.weight, mode='fan_out', nonlinearity='relu')
+                if m.bias is not None:
+                    nn.init.constant_(m.bias, 0)
+            elif isinstance(m, nn.BatchNorm2d):
+                nn.init.constant_(m.weight, 1)
+                nn.init.constant_(m.bias, 0)
+            elif isinstance(m, nn.Linear):
+                nn.init.normal_(m.weight, 0, 0.01)
+                nn.init.constant_(m.bias, 0)
 
 
-@BACKBONE_REGISTRY.register()
-def build_vgg_backbone(cfg, input_shape):
-    # fmt: off
-    depth = cfg.MODEL.VGG.DEPTH
-    freeze_at = cfg.MODEL.BACKBONE.FREEZE_AT
-    norm = cfg.MODEL.VGG.NORM
-    out_features = cfg.MODEL.VGG.OUT_FEATURES
-    in_channels = input_shape.channels
-    pretrain = cfg.MODEL.VGG.PRETRAIN
-    # fmt: on
+@BACKBONE_REGISTRY.register() #already register in baseline model
+def build_vgg_backbone(cfg, _):
+    vgg = vgg_backbone(cfg)
+    print('Loading VGG weights')
+    state_dict = torch.load('checkpoints/vgg16_bn-6c64b313_converted.pth')
+    vgg.load_state_dict(state_dict, strict=False)
+    return vgg
 
-    stages = []
-    out_stage_idx = [
-        {"vgg_block1": 1, "vgg_block2": 2, "vgg_block3": 3, "vgg_block4": 4, "vgg_block5": 5}[f]
-        for f in out_features
-    ]
-    max_stage_idx = max(out_stage_idx)
-    stage_inds = [i for i, x in enumerate(cfgs[depth]) if x == "M"]
-    ind = 0
 
-    for idx, stage_idx in enumerate(range(1, max_stage_idx + 1)):
+@BACKBONE_REGISTRY.register() #already register in baseline model
+def build_vgg_fpn_backbone(cfg, _):
+    # backbone = FPN(
+    #     bottom_up=build_vgg_backbone(cfg),
+    #     in_features=cfg.MODEL.FPN.IN_FEATURES,
+    #     out_channels=cfg.MODEL.FPN.OUT_CHANNELS,
+    #     norm=cfg.MODEL.FPN.NORM,
+    #     top_block=LastLevelMaxPool(),
+    # )
 
-        # No maxpooling in the last block
-        if stage_idx == 5:
-            pool = False
-        else:
-            pool = True
+    bottom_up = vgg_backbone(cfg)
+    in_features = cfg.MODEL.FPN.IN_FEATURES
+    out_channels = cfg.MODEL.FPN.OUT_CHANNELS
+    backbone = FPN(
+        bottom_up=bottom_up,
+        in_features=in_features,
+        out_channels=out_channels,
+        norm=cfg.MODEL.FPN.NORM,
+        top_block=LastLevelMaxPool(),
+        # fuse_type=cfg.MODEL.FPN.FUSE_TYPE,
+    )
+    # return backbone
 
-        stage_kargs = {
-            "block_class": VGGBlock,
-            "in_channels": in_channels,
-            "channel_cfg": cfgs[depth][ind: stage_inds[idx]],
-            "norm": norm,
-            "pool": pool,
-        }
-
-        blocks = VGG.make_stage(**stage_kargs)
-        out_channels = cfgs[depth][ind: stage_inds[idx]][-1]
-        in_channels = out_channels
-        ind = stage_inds[idx] + 1
-        stages.append(blocks)
-    return VGG(stages, out_features=out_features, pretrain=pretrain).freeze(freeze_at)
+    return backbone
