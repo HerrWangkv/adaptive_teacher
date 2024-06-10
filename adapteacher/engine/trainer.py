@@ -578,22 +578,25 @@ class TATeacherTrainer(ATeacherTrainer):
     def generate_targeted_attack_pseudo_labels(self, pesudo_labels_unsup_k):
         ret = []
         for pseudo_labels in pesudo_labels_unsup_k:
-            valid_mask = torch.ones_like(pseudo_labels.gt_classes).bool()
             image_shape = pseudo_labels.image_size
             new_proposal_inst = Instances(image_shape)
             for idx in range(len(pseudo_labels.gt_classes)):
                 prob = pseudo_labels.probs[idx].clone().detach()
-                minor_mask = (
-                    self.global_matrix[:, pseudo_labels.gt_classes[idx]]
-                    >= self.global_matrix[pseudo_labels.gt_classes[idx]]
-                )
-                prob[:-1][minor_mask] = 0
+                prob[pseudo_labels.gt_classes[idx]] = 0
                 attack_target = prob.multinomial(1)
                 if attack_target == self.num_classes:
-                    # ROI ignores those
-                    pseudo_labels.gt_classes[idx] = -1
+                    pseudo_labels.gt_classes[idx] = -1 # Ignore this during attack
                 else:
-                    pseudo_labels.gt_classes[idx] = attack_target
+                    assert pseudo_labels.gt_classes[idx] != attack_target
+                    if (
+                        self.global_matrix[attack_target, pseudo_labels.gt_classes[idx]] 
+                        > self.global_matrix[pseudo_labels.gt_classes[idx], attack_target]
+                    ):
+                        # attack the sample to be easier correctly classified
+                        pass
+                    else:
+                        # attack the sample to be classified as a more major class
+                        pseudo_labels.gt_classes[idx] = attack_target
 
             new_bbox_loc = pseudo_labels.gt_boxes.tensor
             pseudo_boxes = Boxes(new_bbox_loc)
