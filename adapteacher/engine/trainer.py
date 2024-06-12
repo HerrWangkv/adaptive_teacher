@@ -217,7 +217,6 @@ class ATeacherTrainer(DefaultTrainer):
             new_proposal_inst.gt_boxes = new_boxes
             new_proposal_inst.gt_classes = proposal_bbox_inst.pred_classes[valid_map]
             new_proposal_inst.scores = proposal_bbox_inst.scores[valid_map]
-
         return new_proposal_inst
 
     def process_pseudo_label(
@@ -579,23 +578,22 @@ class TATeacherTrainer(ATeacherTrainer):
         for pseudo_labels in proposals_roih_unsup_k:
             image_shape = pseudo_labels.image_size
             new_proposal_inst = Instances(image_shape)
-            for idx in range(len(pseudo_labels.pred_classes)):
-                prob = pseudo_labels.probs[idx,:-1].clone().detach()
-                minor_mask = self.global_matrix[:, pseudo_labels.pred_classes[idx]] >= self.global_matrix[pseudo_labels.pred_classes[idx]]
+            for idx in range(len(pseudo_labels.gt_classes)):
+                prob = self.global_matrix[pseudo_labels.gt_classes[idx]].clone().detach()
+                minor_mask = self.global_matrix[:, pseudo_labels.gt_classes[idx]] >= self.global_matrix[pseudo_labels.gt_classes[idx]]
                 prob[minor_mask] = 0
                 if prob.any():
                     attack_target = prob.multinomial(1)
-                    assert pseudo_labels.pred_classes[idx] != attack_target
-                    pseudo_labels.pred_classes[idx] = attack_target
+                    assert pseudo_labels.gt_classes[idx] != int(attack_target)
+                    pseudo_labels.gt_classes[idx] = int(attack_target)
                 else:
-                    pseudo_labels.pred_classes[idx] = -1
-
-            new_bbox_loc = pseudo_labels.pred_boxes.tensor
+                    pseudo_labels.gt_classes[idx] = -1
+            new_bbox_loc = pseudo_labels.gt_boxes.tensor
             pseudo_boxes = Boxes(new_bbox_loc)
 
             # add boxes to instances
             new_proposal_inst.gt_boxes = pseudo_boxes
-            new_proposal_inst.gt_classes = pseudo_labels.pred_classes
+            new_proposal_inst.gt_classes = pseudo_labels.gt_classes
             ret.append(new_proposal_inst)
         return ret
     
@@ -646,9 +644,10 @@ class TATeacherTrainer(ATeacherTrainer):
 
             #  1. input both strongly and weakly augmented labeled data into student model
             all_label_data = label_data_q + label_data_k
-            record_all_label_data, local_matrix = self.model(
-                all_label_data, branch="supervised", ret_confusion_matrix=True
-            )
+            with torch.no_grad():
+                record_all_label_data, local_matrix = self.model(
+                    all_label_data, branch="supervised", ret_confusion_matrix=True
+                )
             record_dict.update(record_all_label_data)
 
             #  2. calculate the EMA of confusion matrix
@@ -671,30 +670,48 @@ class TATeacherTrainer(ATeacherTrainer):
                     self.cfg.SEMISUPNET.EMA_CONFUSION_MATRIX * self.global_matrix[local_matrix.sum(dim=1) != 0]
                     + (1 - self.cfg.SEMISUPNET.EMA_CONFUSION_MATRIX) * local_matrix[local_matrix.sum(dim=1) != 0]
                 )
-            #  3. generate the pseudo-label using teacher model
+
+            #  3. calculate attack target according to the confusion matrix
+            all_label_data_labels = self.get_label(all_label_data)
+            targeted_attack_pseudo_labels = self.generate_targeted_attack_pseudo_labels(
+                copy.deepcopy(all_label_data_labels)
+            )
+            all_label_data = self.remove_label(all_label_data)
+            all_label_data = self.add_label(
+                all_label_data, targeted_attack_pseudo_labels
+            )
+
+            #  4. conduct targeted attack on all_label_data
+            pertubation = self.model(all_label_data, branch="attack")
+            pertubation *= -self.cfg.SEMISUPNET.ATTACK_SEVERITY / torch.tensor(self.cfg.MODEL.PIXEL_STD).to(pertubation.device).view(1,-1,1,1)
+            all_label_data = self.remove_label(all_label_data)
+            all_label_data = self.add_label(
+                all_label_data, all_label_data_labels
+            )
+
+            #  5. adversarial training
+            record_all_attacked_data = self.model(
+                all_label_data, branch="supervised_target", pertubation=pertubation
+            )
+            new_record_all_attacked_data = {}
+            for key in record_all_attacked_data.keys():
+                new_record_all_attacked_data[key + "_attacked"] = record_all_attacked_data[
+                    key
+                ]
+            record_dict.update(new_record_all_attacked_data)
+
+            #  6. generate the pseudo-label using teacher model
             with torch.no_grad():
                 proposals_roih_unsup_k = self.model_teacher(unlabel_data_k, branch="unsup_data_weak")
 
-            #  4. Pseudo-labeling
+            #  7. Pseudo-labeling
             cur_threshold = self.cfg.SEMISUPNET.BBOX_THRESHOLD
 
             pesudo_proposals_roih_unsup_k, _ = self.process_pseudo_label(
                 proposals_roih_unsup_k, cur_threshold, "roih", "thresholding"
             )
 
-            #  5. calculate attack target according to the confusion matrix
-            targeted_attack_pseudo_labels = self.generate_targeted_attack_pseudo_labels(
-                copy.deepcopy(proposals_roih_unsup_k)
-            )
-            unlabel_data_q = self.add_label(
-                unlabel_data_q, targeted_attack_pseudo_labels
-            )
-
-            #  6. conduct targeted attack on unlabel_data_q
-            pertubation = self.model(unlabel_data_q, branch="attack")
-            pertubation *= -self.cfg.SEMISUPNET.ATTACK_SEVERITY / torch.tensor(self.cfg.MODEL.PIXEL_STD).to(pertubation.device).view(1,-1,1,1)
-
-            #  7. set the labels back to pseudo labels generated by the teacher
+            #  8. set the labels back to pseudo labels generated by the teacher
             unlabel_data_q = self.remove_label(unlabel_data_q)
             unlabel_data_q = self.add_label(
                 unlabel_data_q, pesudo_proposals_roih_unsup_k
@@ -703,9 +720,9 @@ class TATeacherTrainer(ATeacherTrainer):
                 unlabel_data_k, pesudo_proposals_roih_unsup_k
             )
 
-            #  8. input strongly augmented unlabeled data into model
+            #  9. input strongly augmented unlabeled data into model
             record_all_unlabel_data = self.model(
-                unlabel_data_q, branch="supervised_target", pertubation=pertubation
+                unlabel_data_q, branch="supervised_target"
             )
             new_record_all_unlabel_data = {}
             for key in record_all_unlabel_data.keys():
@@ -714,7 +731,7 @@ class TATeacherTrainer(ATeacherTrainer):
                 ]
             record_dict.update(new_record_all_unlabel_data)
 
-            # 7. input weakly labeled data (source) and weakly unlabeled data (target) to student model
+            # 10. input weakly labeled data (source) and weakly unlabeled data (target) to student model
             # give sign to the target data
             for i_index in range(len(unlabel_data_k)):
                 for k, v in unlabel_data_k[i_index].items():
@@ -742,9 +759,12 @@ class TATeacherTrainer(ATeacherTrainer):
                         loss_dict[key] = (
                             record_dict[key] * self.cfg.SEMISUPNET.DIS_LOSS_WEIGHT
                         ) 
+                    elif key[-8:] == "attacked": # attacked loss  
+                        loss_dict[key] = (
+                            record_dict[key] * 0.5
+                        ) 
                     else:  # supervised loss
-                        loss_dict[key] = record_dict[key] * 1
-
+                        loss_dict[key] = record_dict[key] * 0.5
             losses = sum(loss_dict.values())
 
         metrics_dict = record_dict
