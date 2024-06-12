@@ -4,7 +4,7 @@ MODEL:
   BACKBONE:
     NAME: "build_vgg_backbone"
   PROPOSAL_GENERATOR:
-    NAME: "BgPseudoRPN"
+    NAME: "PseudoRPN"
   RPN:
     IN_FEATURES: ["vgg4"]
   ROI_HEADS:
@@ -20,7 +20,7 @@ SOLVER:
   IMG_PER_BATCH_UNLABEL: 16
   BASE_LR: 0.04
   WARMUP_ITERS: 500
-  CHECKPOINT_PERIOD: 2000
+  CHECKPOINT_PERIOD: 500
 DATASETS:
   CROSS_DATASET: True
   TRAIN_LABEL: ("cityscapes_train",)
