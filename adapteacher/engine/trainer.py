@@ -534,7 +534,7 @@ class TATeacherTrainer(ATeacherTrainer):
     def __init__(self, cfg):
         super().__init__(cfg)
         self.num_classes = cfg.MODEL.ROI_HEADS.NUM_CLASSES
-        self.global_matrix = torch.zeros((self.num_classes, self.num_classes))
+        self.global_matrix = torch.eye(self.num_classes).to("cuda")
 
     def threshold_bbox(self, proposal_bbox_inst, thres=0.7, proposal_type="roih"):
         if proposal_type == "rpn":
@@ -567,7 +567,6 @@ class TATeacherTrainer(ATeacherTrainer):
             # add boxes to instances
             new_proposal_inst.gt_boxes = new_boxes
             new_proposal_inst.gt_classes = proposal_bbox_inst.pred_classes[valid_map]
-            new_proposal_inst.probs = proposal_bbox_inst.probs[valid_map]
 
         return new_proposal_inst
 
@@ -575,35 +574,28 @@ class TATeacherTrainer(ATeacherTrainer):
     # =============== Generate Attack Target ===============
     # ======================================================
 
-    def generate_targeted_attack_pseudo_labels(self, pesudo_labels_unsup_k):
+    def generate_targeted_attack_pseudo_labels(self, proposals_roih_unsup_k):
         ret = []
-        for pseudo_labels in pesudo_labels_unsup_k:
+        for pseudo_labels in proposals_roih_unsup_k:
             image_shape = pseudo_labels.image_size
             new_proposal_inst = Instances(image_shape)
-            for idx in range(len(pseudo_labels.gt_classes)):
-                prob = pseudo_labels.probs[idx].clone().detach()
-                prob[pseudo_labels.gt_classes[idx]] = 0
-                attack_target = prob.multinomial(1)
-                if attack_target == self.num_classes:
-                    pseudo_labels.gt_classes[idx] = -1 # Ignore this during attack
+            for idx in range(len(pseudo_labels.pred_classes)):
+                prob = pseudo_labels.probs[idx,:-1].clone().detach()
+                minor_mask = self.global_matrix[:, pseudo_labels.pred_classes[idx]] >= self.global_matrix[pseudo_labels.pred_classes[idx]]
+                prob[minor_mask] = 0
+                if prob.any():
+                    attack_target = prob.multinomial(1)
+                    assert pseudo_labels.pred_classes[idx] != attack_target
+                    pseudo_labels.pred_classes[idx] = attack_target
                 else:
-                    assert pseudo_labels.gt_classes[idx] != attack_target
-                    if (
-                        self.global_matrix[attack_target, pseudo_labels.gt_classes[idx]] 
-                        > self.global_matrix[pseudo_labels.gt_classes[idx], attack_target]
-                    ):
-                        # attack the sample to be easier correctly classified
-                        pass
-                    else:
-                        # attack the sample to be classified as a more major class
-                        pseudo_labels.gt_classes[idx] = attack_target
+                    pseudo_labels.pred_classes[idx] = -1
 
-            new_bbox_loc = pseudo_labels.gt_boxes.tensor
+            new_bbox_loc = pseudo_labels.pred_boxes.tensor
             pseudo_boxes = Boxes(new_bbox_loc)
 
             # add boxes to instances
             new_proposal_inst.gt_boxes = pseudo_boxes
-            new_proposal_inst.gt_classes = pseudo_labels.gt_classes
+            new_proposal_inst.gt_classes = pseudo_labels.pred_classes
             ret.append(new_proposal_inst)
         return ret
     
@@ -692,7 +684,7 @@ class TATeacherTrainer(ATeacherTrainer):
 
             #  5. calculate attack target according to the confusion matrix
             targeted_attack_pseudo_labels = self.generate_targeted_attack_pseudo_labels(
-                copy.deepcopy(pesudo_proposals_roih_unsup_k)
+                copy.deepcopy(proposals_roih_unsup_k)
             )
             unlabel_data_q = self.add_label(
                 unlabel_data_q, targeted_attack_pseudo_labels

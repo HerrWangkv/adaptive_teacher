@@ -70,8 +70,8 @@ class FgFastRCNNOutputLayers(FastRCNNOutputLayers):
                 gt_classes.device
             )
             for gt in range(self.num_classes):
-                for pred in scores[:, :-1].argmax(dim=1)[gt_classes == gt]:
-                    confusion_matrix[gt, pred] += 1
+                for pred in range(self.num_classes):
+                    confusion_matrix[gt, pred] += (scores.argmax(dim=1)[gt_classes == gt] == pred).sum()
             return {
                 k: v * self.loss_weight.get(k, 1.0) for k, v in losses.items()
             }, confusion_matrix
