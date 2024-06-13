@@ -682,7 +682,7 @@ class TATeacherTrainer(ATeacherTrainer):
             )
 
             #  4. conduct targeted attack on all_label_data
-            pertubation = self.model(all_label_data, branch="attack")
+            pertubation = self.model_teacher(all_label_data, branch="attack")
             pertubation *= -self.cfg.SEMISUPNET.ATTACK_SEVERITY / torch.tensor(self.cfg.MODEL.PIXEL_STD).to(pertubation.device).view(1,-1,1,1)
             all_label_data = self.remove_label(all_label_data)
             all_label_data = self.add_label(
