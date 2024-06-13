@@ -183,6 +183,51 @@ class StandardROIHeadsPseudoLab(StandardROIHeads):
         )
 
         return proposals_with_gt
+@ROI_HEADS_REGISTRY.register()
+class PseudoROIHeads(StandardROIHeads):
+
+    def forward(
+        self,
+        images: ImageList,
+        features: Dict[str, torch.Tensor],
+        proposals: List[Instances],
+        targets: Optional[List[Instances]] = None,
+        branch: str = "",
+    ) -> Tuple[List[Instances], Dict[str, torch.Tensor]]:
+        del images
+        if self.training and branch in ["supervised", "supervised_target", "attack"]:
+            assert targets, "'targets' argument is required during training"
+            # Targets with gt_classes -1 will be ignored
+            proposals = self.label_and_sample_proposals(proposals, targets)
+        del targets
+
+        if self.training and branch in ["supervised", "supervised_target", "attack"]:
+            losses = self._forward_box(features, proposals, branch)
+            return proposals, losses
+        elif not self.training or branch == "unsup_data_weak":
+            pred_instances = self._forward_box(features, proposals, branch)
+            return pred_instances, {}
+        else:
+            raise ValueError(f"Unknown branch {branch}!")
+
+    def _forward_box(
+        self,
+        features: Dict[str, torch.Tensor],
+        proposals: List[Instances],
+        branch: str,
+    ):
+        features = [features[f] for f in self.box_in_features]
+        box_features = self.box_pooler(features, [x.proposal_boxes for x in proposals])
+        box_features = self.box_head(box_features)
+        predictions = self.box_predictor(box_features)
+        del box_features
+
+        if self.training and branch != "unsup_data_weak":
+            losses = self.box_predictor.losses(predictions, proposals)
+            return losses
+        else:
+            pred_instances, _ = self.box_predictor.inference(predictions, proposals)
+            return pred_instances
 
 
 @ROI_HEADS_REGISTRY.register()

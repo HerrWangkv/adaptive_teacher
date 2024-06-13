@@ -491,7 +491,7 @@ class TargetedAttackedGeneralizedRCNN(GeneralizedRCNN):
         images = self.preprocess_image(batched_inputs)
         if pertubation is not None:
             images.tensor = self.clip(images.tensor, pertubation)
-        if branch == "attack":
+        if branch in ["attack", "attack_domain"]:
             images.tensor.requires_grad_(True)
         if "instances" in batched_inputs[0]:
             gt_instances = [x["instances"].to(self.device) for x in batched_inputs]
@@ -602,6 +602,20 @@ class TargetedAttackedGeneralizedRCNN(GeneralizedRCNN):
 
             return proposals_roih
 
+        elif branch == "attack_domain":
+            features_s = grad_reverse(features[self.dis_type])
+            D_img_out_s = self.D_img(features_s)
+            loss_D_img_s = F.binary_cross_entropy_with_logits(
+                D_img_out_s,
+                torch.FloatTensor(D_img_out_s.data.size())
+                .fill_(source_label)
+                .to(self.device),
+            )
+            grad = torch.autograd.grad(
+                loss_D_img_s, images.tensor, retain_graph=False, create_graph=False
+            )
+            return grad[0].sign()
+        
         elif branch == "attack":
             # RPN
             proposals_rpn, proposal_losses = self.proposal_generator(
