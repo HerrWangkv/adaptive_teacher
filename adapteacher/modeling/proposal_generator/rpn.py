@@ -92,7 +92,7 @@ class PseudoRPN(RPN):
             for x in pred_anchor_deltas
         ]
 
-        if self.training and branch in ["supervised", "supervised_target", "attack"]:
+        if self.training and branch in ["supervised", "supervised_target", "supervised_attacked", "attack"]:
             assert gt_instances is not None, "RPN requires gt_instances in training!"
             gt_labels, gt_boxes = self.label_and_sample_anchors(
                 anchors, gt_instances

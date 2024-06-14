@@ -8,6 +8,7 @@ import logging
 import numpy as np
 import os
 import pickle
+import cv2
 from collections import OrderedDict
 import pycocotools.mask as mask_util
 import torch
@@ -20,9 +21,10 @@ from detectron2.config import CfgNode
 from detectron2.data import MetadataCatalog
 from detectron2.data.datasets.coco import convert_to_coco_dict
 from detectron2.evaluation.fast_eval_api import COCOeval_opt
-from detectron2.structures import Boxes, BoxMode, pairwise_iou
+from detectron2.structures import Boxes, BoxMode, pairwise_iou, Instances
 from detectron2.utils.file_io import PathManager
 from detectron2.utils.logger import create_small_table
+from detectron2.utils.visualizer import Visualizer
 
 from detectron2.evaluation import DatasetEvaluator
 from iopath.common.file_io import file_lock
@@ -160,7 +162,7 @@ class COCOEvaluator(DatasetEvaluator):
         self._do_evaluation = "annotations" in self._coco_api.dataset
         if self._do_evaluation:
             self._kpt_oks_sigmas = kpt_oks_sigmas
-
+        # os.makedirs("imgs", exist_ok=False)
     def reset(self):
         self._predictions = []
 
@@ -175,7 +177,28 @@ class COCOEvaluator(DatasetEvaluator):
         """
         for input, output in zip(inputs, outputs):
             prediction = {"image_id": input["image_id"]}
+            # v = Visualizer(
+            #     input["image"].cpu().numpy().transpose(1, 2, 0)[:, :, ::-1],
+            #     MetadataCatalog.get("cityscapes_train"),
+            # )
+            # tmp = Instances(input["image"].shape)
+            # valid_mask = output["instances"].pred_classes == 5
+            # if valid_mask.any():
+            #     tmp.pred_boxes = Boxes(
+            #         output["instances"].pred_boxes.tensor[valid_mask]
+            #         / max(input["height"], input["width"])
+            #         * 1333
+            #     )
 
+            #     tmp.scores = output[
+            #         "instances"
+            #     ].scores[valid_mask]  # output["instances"].severities
+            #     tmp.pred_classes = output["instances"].pred_classes[valid_mask]
+            #     # tmp.scores_logists = output["instances"].scores_logists
+            #     # tmp.boxes_sigma = output["instances"].boxes_sigma
+            #     out = v.draw_instance_predictions(tmp.to("cpu"))
+            #     path = os.path.join("imgs", input["file_name"].split("/")[-1])
+            #     cv2.imwrite(path, out.get_image()[:, :, ::-1])
             if "instances" in output:
                 instances = output["instances"].to(self._cpu_device)
                 prediction["instances"] = instances_to_coco_json(

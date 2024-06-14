@@ -12,8 +12,20 @@ from detectron2.modeling.backbone import (
 from detectron2.modeling.backbone.fpn import FPN, LastLevelMaxPool, LastLevelP6P7
 
 
+class DualBatchNorm2d(nn.Module):
+    def __init__(self, num_features):
+        super().__init__()
+        self.main_bn = nn.BatchNorm2d(num_features)
+        self.aux_bn = nn.BatchNorm2d(num_features)
+    
+    def forward(self, x, use_aux=False):
+        if use_aux:
+            return self.aux_bn(x) + self.main_bn(x) * 0
+        else:
+            return self.main_bn(x) + self.aux_bn(x) * 0
 
-def make_layers(cfg: List[Union[str, int]], batch_norm: bool = False) -> nn.Sequential:
+
+def make_layers(cfg: List[Union[str, int]], batch_norm: bool = False, aux_batch_norm:bool=False) -> nn.Sequential:
     layers: List[nn.Module] = []
     in_channels = 3
     for v in cfg:
@@ -23,7 +35,10 @@ def make_layers(cfg: List[Union[str, int]], batch_norm: bool = False) -> nn.Sequ
             v = cast(int, v)
             conv2d = nn.Conv2d(in_channels, v, kernel_size=3, padding=1)
             if batch_norm:
-                layers += [conv2d, nn.BatchNorm2d(v), nn.ReLU(inplace=True)]
+                if aux_batch_norm:
+                    layers += [conv2d, DualBatchNorm2d(v), nn.ReLU(inplace=True)]
+                else:
+                    layers += [conv2d, nn.BatchNorm2d(v), nn.ReLU(inplace=True)]
             else:
                 layers += [conv2d, nn.ReLU(inplace=True)]
             in_channels = v
@@ -59,7 +74,7 @@ class vgg_backbone(Backbone):
     def __init__(self, cfg):
         super().__init__()
 
-        self.vgg = make_layers(cfgs['vgg16'],batch_norm=True)
+        self.vgg = make_layers(cfgs['vgg16'],batch_norm=True, aux_batch_norm=cfg.MODEL.VGG.AUX_BN)
 
         self._initialize_weights()
         # self.stage_names_index = {'vgg1':3, 'vgg2':8 , 'vgg3':15, 'vgg4':22, 'vgg5':29}
@@ -93,10 +108,14 @@ class vgg_backbone(Backbone):
 
         del self.vgg
 
-    def forward(self, x):
+    def forward(self, x, use_aux=False):
         features = {}
         for name, stage in zip(self._stage_names, self.stages):
-            x = stage(x)
+            for layer in stage:
+                if isinstance(layer, DualBatchNorm2d):
+                    x = layer(x, use_aux)
+                else:
+                    x = layer(x)
             # if name in self._out_features:
             #     outputs[name] = x
             features[name] = x

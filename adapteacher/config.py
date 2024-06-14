@@ -39,8 +39,4 @@ def add_ateacher_config(cfg):
 
     # VGG
     _C.MODEL.VGG = CN()
-    _C.MODEL.VGG.DEPTH = 16
-    _C.MODEL.VGG.OUT_FEATURES = ["vgg_block5"]
-    _C.MODEL.VGG.NORM = "BN"
-    _C.MODEL.VGG.CONV5_OUT_CHANNELS = 512
-    _C.MODEL.VGG.PRETRAIN = "./vgg16_caffe.pth"
+    _C.MODEL.VGG.AUX_BN = False

@@ -195,13 +195,13 @@ class PseudoROIHeads(StandardROIHeads):
         branch: str = "",
     ) -> Tuple[List[Instances], Dict[str, torch.Tensor]]:
         del images
-        if self.training and branch in ["supervised", "supervised_target", "attack"]:
+        if self.training and branch in ["supervised", "supervised_target", "supervised_attacked", "attack"]:
             assert targets, "'targets' argument is required during training"
             # Targets with gt_classes -1 will be ignored
             proposals = self.label_and_sample_proposals(proposals, targets)
         del targets
 
-        if self.training and branch in ["supervised", "supervised_target", "attack"]:
+        if self.training and branch in ["supervised", "supervised_target", "supervised_attacked", "attack"]:
             losses = self._forward_box(features, proposals, branch)
             return proposals, losses
         elif not self.training or branch == "unsup_data_weak":

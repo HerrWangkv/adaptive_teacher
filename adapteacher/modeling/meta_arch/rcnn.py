@@ -653,3 +653,247 @@ class TargetedAttackedGeneralizedRCNN(GeneralizedRCNN):
         with torch.no_grad():
             pertubed_image = self.norm_image(self.denorm_image(image + pertubation))
         return pertubed_image
+
+@META_ARCH_REGISTRY.register()
+class UntargetedAttackedGeneralizedRCNN(GeneralizedRCNN):
+
+    @configurable
+    def __init__(
+        self,
+        dis_type: str,
+        **kwargs
+    ):
+        """
+        Args:
+            backbone: a backbone module, must follow detectron2's backbone interface
+            proposal_generator: a module that generates proposals using backbone features
+            roi_heads: a ROI head that performs per-region computation
+            pixel_mean, pixel_std: list or tuple with #channels element, representing
+                the per-channel mean and std to be used to normalize the input image
+            input_format: describe the meaning of channels of input. Needed by visualization
+            vis_period: the period to run visualization. Set to 0 to disable.
+        """
+        super().__init__(**kwargs)
+
+        self.dis_type = dis_type
+        self.D_img = FCDiscriminator_img(
+            self.backbone._out_feature_channels[self.dis_type]
+        )  
+
+    @classmethod
+    def from_config(cls, cfg):
+        backbone = build_backbone(cfg)
+        return {
+            "backbone": backbone,
+            "proposal_generator": build_proposal_generator(
+                cfg, backbone.output_shape()
+            ),
+            "roi_heads": build_roi_heads(cfg, backbone.output_shape()),
+            "input_format": cfg.INPUT.FORMAT,
+            "vis_period": cfg.VIS_PERIOD,
+            "pixel_mean": cfg.MODEL.PIXEL_MEAN,
+            "pixel_std": cfg.MODEL.PIXEL_STD,
+            "dis_type": cfg.SEMISUPNET.DIS_TYPE,
+        }
+
+    def preprocess_image_train(self, batched_inputs: List[Dict[str, torch.Tensor]]):
+        """
+        Normalize, pad and batch the input images.
+        """
+        images = [x["image"].to(self.device) for x in batched_inputs]
+        images = [(x - self.pixel_mean) / self.pixel_std for x in images]
+        images = ImageList.from_tensors(images, self.backbone.size_divisibility)
+
+        images_t = [x["image_unlabeled"].to(self.device) for x in batched_inputs]
+        images_t = [(x - self.pixel_mean) / self.pixel_std for x in images_t]
+        images_t = ImageList.from_tensors(images_t, self.backbone.size_divisibility)
+
+        return images, images_t
+
+    def forward(
+        self,
+        batched_inputs,
+        branch="supervised",
+        pertubation=None,
+    ):
+        if not self.training:
+            return self.inference(batched_inputs)
+
+        source_label = 0
+        target_label = 1
+
+        if branch == "domain":
+            images_s, images_t = self.preprocess_image_train(batched_inputs)
+
+            features_s = self.backbone(images_s.tensor)
+            features_s = grad_reverse(features_s[self.dis_type])
+            D_img_out_s = self.D_img(features_s)
+            loss_D_img_s = F.binary_cross_entropy_with_logits(
+                D_img_out_s,
+                torch.FloatTensor(D_img_out_s.data.size())
+                .fill_(source_label)
+                .to(self.device),
+            )
+
+            features_t = self.backbone(images_t.tensor)
+            features_t = grad_reverse(features_t[self.dis_type])
+            D_img_out_t = self.D_img(features_t)
+            loss_D_img_t = F.binary_cross_entropy_with_logits(
+                D_img_out_t,
+                torch.FloatTensor(D_img_out_t.data.size())
+                .fill_(target_label)
+                .to(self.device),
+            )
+
+            losses = {}
+            losses["loss_D_img_s"] = loss_D_img_s
+            losses["loss_D_img_t"] = loss_D_img_t
+            return losses
+
+        images = self.preprocess_image(batched_inputs)
+        if "instances" in batched_inputs[0]:
+            gt_instances = [x["instances"].to(self.device) for x in batched_inputs]
+        else:
+            gt_instances = None
+
+        if branch == "attack":
+            images.tensor.requires_grad_(True)
+            features = self.backbone(images.tensor, use_aux=True)
+            # RPN
+            proposals_rpn, proposal_losses = self.proposal_generator(
+                images, features, gt_instances, branch=branch
+            )
+            # ROI
+            _, detector_losses = self.roi_heads(
+                images,
+                features,
+                proposals_rpn,
+                gt_instances,
+                branch=branch,
+            )
+            losses = proposal_losses["loss_rpn_cls"] + detector_losses["loss_cls"]
+            grad = torch.autograd.grad(
+                losses, images.tensor, retain_graph=False, create_graph=False
+            )
+            return grad[0].sign()
+        elif branch == "supervised_attacked":
+            assert pertubation is not None
+            images.tensor = self.clip(images.tensor, pertubation)
+            features = self.backbone(images.tensor, use_aux=True)
+            # RPN
+            proposals_rpn, proposal_losses = self.proposal_generator(
+                images, features, gt_instances, branch=branch
+            )
+
+            # ROI
+            _, detector_losses = self.roi_heads(
+                images, features, proposals_rpn, gt_instances, branch=branch
+            )
+
+            # # visualization
+            # if self.vis_period > 0:
+            #     storage = get_event_storage()
+            #     if storage.iter % self.vis_period == 0:
+            #         self.visualize_training(batched_inputs, proposals_rpn, branch)
+
+            losses = {}
+            losses.update(detector_losses)
+            losses.update(proposal_losses)
+            return losses
+
+        features = self.backbone(images.tensor)
+
+        if branch == "supervised":
+            features_s = grad_reverse(features[self.dis_type])
+            D_img_out_s = self.D_img(features_s)
+            loss_D_img_s = F.binary_cross_entropy_with_logits(
+                D_img_out_s,
+                torch.FloatTensor(D_img_out_s.data.size())
+                .fill_(source_label)
+                .to(self.device),
+            )
+
+            # RPN
+            proposals_rpn, proposal_losses = self.proposal_generator(
+                images, features, gt_instances, branch=branch
+            )
+
+            # ROI
+            _, detector_losses = self.roi_heads(
+                images, features, proposals_rpn, gt_instances, branch=branch
+            )
+
+            # # visualization
+            # if self.vis_period > 0:
+            #     storage = get_event_storage()
+            #     if storage.iter % self.vis_period == 0:
+            #         self.visualize_training(batched_inputs, proposals_rpn, branch)
+            losses = {}
+            losses.update(detector_losses)
+            losses.update(proposal_losses)
+            losses["loss_D_img_s"] = loss_D_img_s * 0.001
+            return losses
+
+        elif branch == "supervised_target":
+            # RPN
+            proposals_rpn, proposal_losses = self.proposal_generator(
+                images, features, gt_instances, branch=branch
+            )
+
+            # ROI
+            _, detector_losses = self.roi_heads(
+                images, features, proposals_rpn, gt_instances, branch=branch
+            )
+
+            # # visualization
+            # if self.vis_period > 0:
+            #     storage = get_event_storage()
+            #     if storage.iter % self.vis_period == 0:
+            #         self.visualize_training(batched_inputs, proposals_rpn, branch)
+
+            losses = {}
+            losses.update(detector_losses)
+            losses.update(proposal_losses)
+            return losses
+
+        elif branch == "unsup_data_weak":
+            """
+            unsupervised weak branch: input image without any ground-truth label; output proposals of rpn and roi-head
+            """
+            # RPN
+            proposals_rpn, _ = self.proposal_generator(
+                images, features, None, branch=branch
+            )
+
+            # ROI
+            proposals_roih, ROI_predictions = self.roi_heads(
+                images,
+                features,
+                proposals_rpn,
+                None,
+                branch=branch,
+            )
+
+            # if self.vis_period > 0:
+            #     storage = get_event_storage()
+            #     if storage.iter % self.vis_period == 0:
+            #         self.visualize_training(batched_inputs, proposals_rpn, branch)
+
+            return proposals_roih
+        else:
+            raise NotImplementedError()
+
+    def norm_image(self, images):
+        images = (images - self.pixel_mean.unsqueeze(0)) / self.pixel_std.unsqueeze(0)
+        return images
+
+    def denorm_image(self, images):
+        images = torch.clip(
+            images * self.pixel_std.unsqueeze(0) + self.pixel_mean.unsqueeze(0), 0, 255
+        )
+        return images
+
+    def clip(self, image, pertubation):
+        with torch.no_grad():
+            pertubed_image = self.norm_image(self.denorm_image(image + pertubation))
+        return pertubed_image

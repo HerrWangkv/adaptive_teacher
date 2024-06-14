@@ -7,7 +7,7 @@ from detectron2.config import get_cfg
 from detectron2.engine import default_argument_parser, default_setup, launch
 
 from adapteacher import add_ateacher_config
-from adapteacher.engine.trainer import ATeacherTrainer, TATeacherTrainer, DATeacherTrainer
+from adapteacher.engine.trainer import ATeacherTrainer, TATeacherTrainer, DATeacherTrainer, UATeacherTrainer
 
 # hacky way to register
 from adapteacher.modeling.meta_arch.rcnn import DAobjTwoStagePseudoLabGeneralizedRCNN, TargetedAttackedGeneralizedRCNN
@@ -40,11 +40,13 @@ def main(args):
         Trainer = TATeacherTrainer
     elif cfg.SEMISUPNET.Trainer == "dateacher":
         Trainer = DATeacherTrainer
+    elif cfg.SEMISUPNET.Trainer == "uateacher":
+        Trainer = UATeacherTrainer
     else:
         raise ValueError("Trainer Name is not found.")
 
     if args.eval_only:
-        if cfg.SEMISUPNET.Trainer in ["ateacher", "tateacher", "dateacher"]:
+        if cfg.SEMISUPNET.Trainer in ["ateacher", "tateacher", "dateacher", "uateacher"]:
             model = Trainer.build_model(cfg)
             model_teacher = Trainer.build_model(cfg)
             ensem_ts_model = EnsembleTSModel(model_teacher, model)
