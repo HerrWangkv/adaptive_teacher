@@ -11,9 +11,9 @@ from detectron2.modeling.roi_heads.fast_rcnn import (
 )
 
 class FgFastRCNNOutputLayers(FastRCNNOutputLayers):
-    def losses(self, predictions, proposals, branch, ret_confusion_matrix=False):
+    def losses(self, predictions, proposals, branch):
         """
-        return confusion_matrix if asked
+        Only consider fg loss during attack
         """
         scores, proposal_deltas = predictions
 
@@ -64,19 +64,7 @@ class FgFastRCNNOutputLayers(FastRCNNOutputLayers):
                 proposal_boxes, gt_boxes, proposal_deltas, gt_classes
             ),
         }
-
-        if ret_confusion_matrix:
-            confusion_matrix = torch.zeros((self.num_classes, self.num_classes)).to(
-                gt_classes.device
-            )
-            for gt in range(self.num_classes):
-                for pred in scores[:, :-1].argmax(dim=1)[gt_classes == gt]:
-                    confusion_matrix[gt, pred] += 1
-            return {
-                k: v * self.loss_weight.get(k, 1.0) for k, v in losses.items()
-            }, confusion_matrix
-        else:
-            return {k: v * self.loss_weight.get(k, 1.0) for k, v in losses.items()}
+        return {k: v * self.loss_weight.get(k, 1.0) for k, v in losses.items()}
 
     def inference(
         self, predictions: Tuple[torch.Tensor, torch.Tensor], proposals: List[Instances]

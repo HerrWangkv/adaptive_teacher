@@ -18,6 +18,7 @@ from detectron2.modeling.backbone import build_backbone, Backbone
 from detectron2.modeling.roi_heads import build_roi_heads
 from detectron2.utils.events import get_event_storage
 from detectron2.structures import ImageList
+from detectron2.layers import cat
 
 
 ############### Image discriminator ##############
@@ -516,20 +517,11 @@ class TargetedAttackedGeneralizedRCNN(GeneralizedRCNN):
             )
 
             # ROI
+            proposals_predictions, detector_losses = self.roi_heads(
+                images, features, proposals_rpn, gt_instances, branch=branch
+            )
             if ret_confusion_matrix:
-                _, detector_losses, confusion_matrix = self.roi_heads(
-                    images,
-                    features,
-                    proposals_rpn,
-                    gt_instances,
-                    branch=branch,
-                    ret_confusion_matrix=True,
-                )
-            else:
-                _, detector_losses = self.roi_heads(
-                    images, features, proposals_rpn, gt_instances, branch=branch
-                )
-
+                confusion_matrix = self.calculate_confusion_matrix(proposals_predictions)
             # # visualization
             # if self.vis_period > 0:
             #     storage = get_event_storage()
@@ -550,20 +542,11 @@ class TargetedAttackedGeneralizedRCNN(GeneralizedRCNN):
             )
 
             # ROI
+            proposals_predictions, detector_losses = self.roi_heads(
+                images, features, proposals_rpn, gt_instances, branch=branch
+            )
             if ret_confusion_matrix:
-                _, detector_losses, confusion_matrix = self.roi_heads(
-                    images,
-                    features,
-                    proposals_rpn,
-                    gt_instances,
-                    branch=branch,
-                    ret_confusion_matrix=True,
-                )
-            else:
-                _, detector_losses = self.roi_heads(
-                    images, features, proposals_rpn, gt_instances, branch=branch
-                )
-
+                confusion_matrix = self.calculate_confusion_matrix(proposals_predictions)
             # # visualization
             # if self.vis_period > 0:
             #     storage = get_event_storage()
@@ -639,3 +622,23 @@ class TargetedAttackedGeneralizedRCNN(GeneralizedRCNN):
         with torch.no_grad():
             pertubed_image = self.norm_image(self.denorm_image(image + pertubation))
         return pertubed_image
+
+    def calculate_confusion_matrix(self, proposals_predictions):
+        proposals, predictions = proposals_predictions
+        pred = predictions[0].clone()
+        gt_classes = (cat([p.gt_classes for p in proposals], dim=0) if len(proposals) else torch.empty(0))
+        del proposals
+        del predictions
+
+        pred_classes = torch.max(pred,dim=1)[1]
+
+        # [x,0] is gt, [x,1] is predicted
+        pairs = torch.vstack((gt_classes,pred_classes)).T
+
+        #remove background 
+        pairs = pairs[torch.all(pairs!=self.roi_heads.num_classes,dim=1)]
+
+        # Rows represents GT, Columns represents predictions. GT=1, Pred=4 > [1,4]
+        class_tensor = torch.zeros(self.roi_heads.num_classes,self.roi_heads.num_classes)
+        class_tensor.index_put_(list(pairs.T),torch.tensor(1.0), accumulate=True)
+        return class_tensor.to("cuda")

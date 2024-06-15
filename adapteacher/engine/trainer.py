@@ -3,6 +3,7 @@ import os
 import time
 import logging
 import torch
+from torch import nn
 from torch.nn.parallel import DistributedDataParallel
 import torch.distributed as dist
 from fvcore.nn.precise_bn import get_bn_modules
@@ -527,14 +528,69 @@ class ATeacherTrainer(DefaultTrainer):
             ret.append(hooks.PeriodicWriter(self.build_writers(), period=20))
         return ret
 
-
+class ConfusionMatrix(nn.Module):
+    def __init__(self, num_classes):
+        super().__init__()
+        self.register_buffer('mat', torch.zeros((num_classes, num_classes)))
+        
 # Targeted Attacked Teacher Trainer
 
 class TATeacherTrainer(ATeacherTrainer):
     def __init__(self, cfg):
-        super().__init__(cfg)
+        """
+        Args:
+            cfg (CfgNode):
+        Use the custom checkpointer, which loads other backbone models
+        with matching heuristics.
+        """
+        cfg = DefaultTrainer.auto_scale_workers(cfg, comm.get_world_size())
+        data_loader = self.build_train_loader(cfg)
+
+        # create an student model
+        model = self.build_model(cfg)
+        optimizer = self.build_optimizer(cfg, model)
+
+        # create an teacher model
+        model_teacher = self.build_model(cfg)
+        self.model_teacher = model_teacher
+
+        # For training, wrap with DDP. But don't need this for inference.
+        if comm.get_world_size() > 1:
+            model = DistributedDataParallel(
+                model, device_ids=[comm.get_local_rank()], broadcast_buffers=False
+            )
+
+        TrainerBase.__init__(self)
+        self._trainer = (AMPTrainer if cfg.SOLVER.AMP.ENABLED else SimpleTrainer)(
+            model, data_loader, optimizer
+        )
+        self.scheduler = self.build_lr_scheduler(cfg, optimizer)
         self.num_classes = cfg.MODEL.ROI_HEADS.NUM_CLASSES
-        self.global_matrix = torch.zeros((self.num_classes, self.num_classes))
+        self.global_matrix = ConfusionMatrix(self.num_classes)
+
+        # Ensemble teacher and student model is for model saving and loading
+        ensem_ts_model = EnsembleTSModel(model_teacher, model)
+
+        self.checkpointer = DetectionTSCheckpointer(
+            ensem_ts_model,
+            cfg.OUTPUT_DIR,
+            optimizer=optimizer,
+            scheduler=self.scheduler,
+            global_matrix=self.global_matrix,
+        )
+        self.start_iter = 0
+        self.max_iter = cfg.SOLVER.MAX_ITER
+        self.cfg = cfg
+        self.register_hooks(self.build_hooks())
+        # merlin to save memeory
+        def inplace_relu(m):
+            classname = m.__class__.__name__
+            if classname.find("ReLU") != -1:
+                m.inplace = True
+
+        # self.probe = OpenMatchTrainerProbe(cfg)
+        self.model.apply(inplace_relu)
+        self.model_teacher.apply(inplace_relu)
 
     def threshold_bbox(self, proposal_bbox_inst, thres=0.7, proposal_type="roih"):
         if proposal_type == "rpn":
@@ -584,8 +640,8 @@ class TATeacherTrainer(ATeacherTrainer):
             for idx in range(len(pseudo_labels.gt_classes)):
                 prob = pseudo_labels.probs[idx].clone().detach()
                 minor_mask = (
-                    self.global_matrix[:, pseudo_labels.gt_classes[idx]]
-                    >= self.global_matrix[pseudo_labels.gt_classes[idx]]
+                    self.global_matrix.mat[:, pseudo_labels.gt_classes[idx]]
+                    >= self.global_matrix.mat[pseudo_labels.gt_classes[idx]]
                 )
                 prob[:-1][minor_mask] = 0
                 attack_target = prob.multinomial(1)
@@ -623,7 +679,8 @@ class TATeacherTrainer(ATeacherTrainer):
 
             # input both strong and weak supervised data into model
             label_data_q.extend(label_data_k)
-            record_dict = self.model(label_data_q, branch="supervised")
+            record_dict, local_matrix = self.model(label_data_q, branch="supervised", ret_confusion_matrix=True)
+            self.update_confusion_matrix(local_matrix)
 
             # weight losses
             loss_dict = {}
@@ -658,24 +715,7 @@ class TATeacherTrainer(ATeacherTrainer):
 
             #  2. calculate the EMA of confusion matrix
             # Sum local matrix across all GPUs
-            if comm.get_world_size() > 1:
-                dist.all_reduce(local_matrix, op=dist.ReduceOp.SUM)
-
-            # Normalize local matrix
-            gt_count = local_matrix.sum(dim=1).view(-1, 1)
-            gt_count[gt_count == 0] += 1
-            local_matrix /= gt_count
-
-            if (self.global_matrix == 0).all():
-                self.global_matrix = local_matrix
-            else:
-                self.global_matrix[self.global_matrix.sum(dim=1) == 0] = local_matrix[
-                    self.global_matrix.sum(dim=1) == 0
-                ]
-                self.global_matrix[local_matrix.sum(dim=1) != 0] = (
-                    self.cfg.SEMISUPNET.EMA_CONFUSION_MATRIX * self.global_matrix[local_matrix.sum(dim=1) != 0]
-                    + (1 - self.cfg.SEMISUPNET.EMA_CONFUSION_MATRIX) * local_matrix[local_matrix.sum(dim=1) != 0]
-                )
+            self.update_confusion_matrix(local_matrix)
             #  3. generate the pseudo-label using teacher model
             with torch.no_grad():
                 proposals_roih_unsup_k = self.model_teacher(unlabel_data_k, branch="unsup_data_weak")
@@ -759,3 +799,23 @@ class TATeacherTrainer(ATeacherTrainer):
         self.optimizer.zero_grad()
         losses.backward()
         self.optimizer.step()
+    
+    def update_confusion_matrix(self, local_matrix):
+        if comm.get_world_size() > 1:
+            dist.all_reduce(local_matrix, op=dist.ReduceOp.SUM)
+
+        # Normalize local matrix
+        sum_values = local_matrix.sum(dim=1)
+        mask = sum_values!=0
+        local_matrix[mask] = local_matrix[mask] / sum_values[mask].view(-1, 1)
+
+        if (self.global_matrix.mat == 0).all():
+            self.global_matrix.mat = local_matrix
+        else:
+            self.global_matrix.mat[self.global_matrix.mat.sum(dim=1) == 0] = local_matrix[
+                self.global_matrix.mat.sum(dim=1) == 0
+            ]
+            self.global_matrix.mat[mask] = (
+                self.cfg.SEMISUPNET.EMA_CONFUSION_MATRIX * self.global_matrix.mat[mask]
+                + (1 - self.cfg.SEMISUPNET.EMA_CONFUSION_MATRIX) * local_matrix[mask]
+            )

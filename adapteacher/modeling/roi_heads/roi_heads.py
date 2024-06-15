@@ -234,10 +234,9 @@ class FgPseudoROIHeads(StandardROIHeads):
         proposals: List[Instances],
         targets: Optional[List[Instances]] = None,
         branch: str = "",
-        ret_confusion_matrix: bool = False,
     ) -> Tuple[List[Instances], Dict[str, torch.Tensor]]:
         """
-        return confusion matrix if supervised
+        also return predictions
         """
         del images
         if self.training and branch in ["supervised", "supervised_target", "attack"]:
@@ -247,17 +246,11 @@ class FgPseudoROIHeads(StandardROIHeads):
         del targets
 
         if self.training and branch in ["supervised", "supervised_target", "attack"]:
-            if ret_confusion_matrix:
-                losses, confusion_matrix = self._forward_box(
-                    features, proposals, branch, ret_confusion_matrix
-                )
-                return proposals, losses, confusion_matrix
-            else:
-                losses = self._forward_box(features, proposals, branch)
-                return proposals, losses
+            losses, predictions = self._forward_box(features, proposals, branch)
+            return (proposals, predictions), losses
         elif not self.training or branch == "unsup_data_weak":
-            pred_instances = self._forward_box(features, proposals, branch)
-            return pred_instances, {}
+            pred_instances, predictions = self._forward_box(features, proposals, branch)
+            return pred_instances, predictions
         else:
             raise ValueError(f"Unknown branch {branch}!")
 
@@ -266,10 +259,9 @@ class FgPseudoROIHeads(StandardROIHeads):
         features: Dict[str, torch.Tensor],
         proposals: List[Instances],
         branch: str,
-        ret_confusion_matrix: bool = False,
     ):
         """
-        return confusion matrix if required
+        also return predictions
         """
         features = [features[f] for f in self.box_in_features]
         box_features = self.box_pooler(features, [x.proposal_boxes for x in proposals])
@@ -278,14 +270,10 @@ class FgPseudoROIHeads(StandardROIHeads):
         del box_features
 
         if self.training and branch != "unsup_data_weak":
-            if ret_confusion_matrix:
-                losses, confusion_matrix = self.box_predictor.losses(
-                    predictions, proposals, branch, ret_confusion_matrix=True
-                )
-                return losses, confusion_matrix
-            else:
-                losses = self.box_predictor.losses(predictions, proposals, branch)
-                return losses
+            losses = self.box_predictor.losses(
+                predictions, proposals, branch
+            )
+            return losses, predictions
         else:
             pred_instances, _ = self.box_predictor.inference(predictions, proposals)
-            return pred_instances
+            return pred_instances, predictions
