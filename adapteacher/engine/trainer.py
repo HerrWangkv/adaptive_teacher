@@ -634,22 +634,21 @@ class TATeacherTrainer(ATeacherTrainer):
     def generate_targeted_attack_pseudo_labels(self, pesudo_labels_unsup_k):
         ret = []
         for pseudo_labels in pesudo_labels_unsup_k:
-            valid_mask = torch.ones_like(pseudo_labels.gt_classes).bool()
             image_shape = pseudo_labels.image_size
             new_proposal_inst = Instances(image_shape)
             for idx in range(len(pseudo_labels.gt_classes)):
-                prob = pseudo_labels.probs[idx].clone().detach()
+                prob = pseudo_labels.probs[idx, :-1].clone().detach()
                 minor_mask = (
                     self.global_matrix.mat[:, pseudo_labels.gt_classes[idx]]
                     >= self.global_matrix.mat[pseudo_labels.gt_classes[idx]]
                 )
-                prob[:-1][minor_mask] = 0
-                attack_target = prob.multinomial(1)
-                if attack_target == self.num_classes:
+                if not minor_mask.all():
+                    prob[minor_mask] = 0
+                    attack_target = prob.multinomial(1)
+                    pseudo_labels.gt_classes[idx] = attack_target
+                else:
                     # ROI ignores those
                     pseudo_labels.gt_classes[idx] = -1
-                else:
-                    pseudo_labels.gt_classes[idx] = attack_target
 
             new_bbox_loc = pseudo_labels.gt_boxes.tensor
             pseudo_boxes = Boxes(new_bbox_loc)
@@ -812,6 +811,8 @@ class TATeacherTrainer(ATeacherTrainer):
         if (self.global_matrix.mat == 0).all():
             self.global_matrix.mat = local_matrix
         else:
+            if self.global_matrix.mat.get_device() == -1:
+                self.global_matrix.mat = self.global_matrix.mat.to(local_matrix.device)
             self.global_matrix.mat[self.global_matrix.mat.sum(dim=1) == 0] = local_matrix[
                 self.global_matrix.mat.sum(dim=1) == 0
             ]
