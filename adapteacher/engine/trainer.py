@@ -637,18 +637,18 @@ class TATeacherTrainer(ATeacherTrainer):
             image_shape = pseudo_labels.image_size
             new_proposal_inst = Instances(image_shape)
             for idx in range(len(pseudo_labels.gt_classes)):
-                prob = pseudo_labels.probs[idx, :-1].clone().detach()
+                prob = pseudo_labels.probs[idx].clone().detach()
                 minor_mask = (
                     self.global_matrix.mat[:, pseudo_labels.gt_classes[idx]]
                     >= self.global_matrix.mat[pseudo_labels.gt_classes[idx]]
                 )
-                if not minor_mask.all():
-                    prob[minor_mask] = 0
-                    attack_target = prob.multinomial(1)
-                    pseudo_labels.gt_classes[idx] = attack_target
-                else:
+                prob[:-1][minor_mask] = 0
+                attack_target = prob.multinomial(1)
+                if attack_target == self.num_classes:
                     # ROI ignores those
                     pseudo_labels.gt_classes[idx] = -1
+                else:
+                    pseudo_labels.gt_classes[idx] = attack_target
 
             new_bbox_loc = pseudo_labels.gt_boxes.tensor
             pseudo_boxes = Boxes(new_bbox_loc)
