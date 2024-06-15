@@ -645,11 +645,13 @@ class TATeacherTrainer(ATeacherTrainer):
                 prob[:-1][minor_mask] = 0
                 attack_target = prob.multinomial(1)
                 if attack_target == self.num_classes:
-                    # ROI ignores those
-                    pseudo_labels.gt_classes[idx] = -1
+                    if self.global_matrix.mat[pseudo_labels.gt_classes[idx], pseudo_labels.gt_classes[idx]] < torch.diagonal(self.global_matrix.mat).mean():
+                        pseudo_labels.gt_classes[idx] = -2 # placeholder for pertubing minor class objects as background
+                    else:
+                        # ROI ignores those
+                        pseudo_labels.gt_classes[idx] = -1
                 else:
                     pseudo_labels.gt_classes[idx] = attack_target
-
             new_bbox_loc = pseudo_labels.gt_boxes.tensor
             pseudo_boxes = Boxes(new_bbox_loc)
 

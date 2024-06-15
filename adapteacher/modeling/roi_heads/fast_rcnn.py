@@ -51,6 +51,7 @@ class FgFastRCNNOutputLayers(FastRCNNOutputLayers):
 
         if branch == "attack":
             mask = gt_classes != self.num_classes
+            gt_classes[gt_classes == -2] = self.num_classes
             loss_cls = cross_entropy(
                 scores[mask],
                 gt_classes[mask],
