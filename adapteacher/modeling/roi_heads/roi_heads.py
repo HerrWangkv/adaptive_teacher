@@ -312,8 +312,9 @@ class FgPseudoROIHeads(StandardROIHeads):
             )
             matched_idxs, matched_labels = self.proposal_matcher(match_quality_matrix)
             weights = targets_per_image.weights if "weights" in targets_per_image._fields else None
-            sampled_idxs, gt_classes, weights = self._sample_proposals(
-                matched_idxs, matched_labels, targets_per_image.gt_classes, weights
+            soft_classes = targets_per_image.soft_classes if "soft_classes" in targets_per_image._fields else None
+            sampled_idxs, gt_classes, weights, soft_classes = self._sample_proposals(
+                matched_idxs, matched_labels, targets_per_image.gt_classes, weights=weights, soft_classes=soft_classes
             )
 
             # Set target attributes of the sampled proposals:
@@ -321,6 +322,8 @@ class FgPseudoROIHeads(StandardROIHeads):
             proposals_per_image.gt_classes = gt_classes
             if weights is not None:
                 proposals_per_image.weights = weights
+            if soft_classes is not None:
+                proposals_per_image.soft_classes = soft_classes
 
             if has_gt:
                 sampled_targets = matched_idxs[sampled_idxs]
@@ -349,14 +352,16 @@ class FgPseudoROIHeads(StandardROIHeads):
         return proposals_with_gt
 
     def _sample_proposals(
-        self, matched_idxs: torch.Tensor, matched_labels: torch.Tensor, gt_classes: torch.Tensor, weights=None
+        self, matched_idxs: torch.Tensor, matched_labels: torch.Tensor, gt_classes: torch.Tensor, weights=None, soft_classes=None
     ) -> Tuple[torch.Tensor, torch.Tensor]:
         """
-        add weight if necessary
+        add weight and soft_classes if necessary
         """
         has_gt = gt_classes.numel() > 0
         ret_weight = weights is not None
         has_weight = ret_weight and has_gt
+        ret_soft = soft_classes is not None
+        has_soft = ret_soft and has_gt
         # Get the corresponding GT for each proposal
         if has_gt:
             gt_classes = gt_classes[matched_idxs]
@@ -368,15 +373,23 @@ class FgPseudoROIHeads(StandardROIHeads):
                 weights = weights[matched_idxs]
                 weights[matched_labels == 0] = 0
                 weights[matched_labels == -1] = -1
+            if has_soft:
+                soft_classes = soft_classes[matched_idxs]
+                soft_classes[matched_labels == 0] = 0
+                soft_classes[matched_labels == 0, -1] = 1
+                soft_classes[matched_labels == -1] = -1
 
         else:
             gt_classes = torch.zeros_like(matched_idxs) + self.num_classes
             if ret_weight:
                 weights = torch.zeros_like(matched_idxs)
+            if ret_soft:
+                soft_classes = torch.zeros((len(matched_idxs), self.num_classes + 1)).to(matched_idxs.device)
+                soft_classes[:,-1] = 1
 
         sampled_fg_idxs, sampled_bg_idxs = subsample_labels(
             gt_classes, self.batch_size_per_image, self.positive_fraction, self.num_classes
         )
 
         sampled_idxs = torch.cat([sampled_fg_idxs, sampled_bg_idxs], dim=0)
-        return sampled_idxs, gt_classes[sampled_idxs], weights[sampled_idxs] if ret_weight else None
+        return sampled_idxs, gt_classes[sampled_idxs], weights[sampled_idxs] if ret_weight else None, soft_classes[sampled_idxs] if ret_soft else None

@@ -635,22 +635,17 @@ class TATeacherTrainer(ATeacherTrainer):
         ret = []
         for pseudo_labels in pesudo_labels_unsup_k:
             new_proposal_inst = copy.deepcopy(pseudo_labels)
-            pseudo_labels.weights = torch.zeros_like(pseudo_labels.gt_classes).float()
+            new_proposal_inst.soft_classes = torch.zeros_like(pseudo_labels.probs)
             for idx in range(len(pseudo_labels.gt_classes)):
                 gt_cls = pseudo_labels.gt_classes[idx]
                 prob = new_proposal_inst.probs[idx]
-                minor_mask = (
-                    self.global_matrix.mat[:, gt_cls]
-                    >= self.global_matrix.mat[gt_cls]
-                )
-                prob[:-1][minor_mask] = 0
-                attack_target = prob.multinomial(1)
-                if attack_target == self.num_classes:
-                    # ROI ignores those
-                    new_proposal_inst.gt_classes[idx] = -1
+                prob[gt_cls] = 0
+                attack_target = torch.argmax(prob)
+                if attack_target == self.num_classes or self.global_matrix.mat[gt_cls, attack_target] < self.global_matrix.mat[attack_target, gt_cls]:
+                    new_proposal_inst.gt_classes[idx] = -1 # ROI ignores this
                 else:
-                    pseudo_labels.weights[idx] = self.global_matrix.mat[gt_cls, attack_target] - self.global_matrix.mat[attack_target, gt_cls]
-                    new_proposal_inst.gt_classes[idx] = attack_target
+                    new_proposal_inst.soft_classes[idx, gt_cls] = 0.5
+                    new_proposal_inst.soft_classes[idx, attack_target] = 0.5
             ret.append(new_proposal_inst)
         return ret
     
