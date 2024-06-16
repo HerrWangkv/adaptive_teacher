@@ -23,6 +23,11 @@ class FgFastRCNNOutputLayers(FastRCNNOutputLayers):
             if len(proposals)
             else torch.empty(0)
         )
+        weights = (
+            cat([p.weights for p in proposals], dim=0)
+            if len(proposals)
+            else torch.empty(0)
+        ) if "weights" in proposals[0]._fields else None
         _log_classification_stats(scores, gt_classes)
 
         # parse box regression outputs
@@ -50,6 +55,7 @@ class FgFastRCNNOutputLayers(FastRCNNOutputLayers):
             )
 
         if branch == "attack":
+            assert weights is None
             mask = gt_classes != self.num_classes
             loss_cls = cross_entropy(
                 scores[mask],
@@ -57,7 +63,15 @@ class FgFastRCNNOutputLayers(FastRCNNOutputLayers):
                 reduction="mean",
             )
         else:
-            loss_cls = cross_entropy(scores, gt_classes, reduction="mean")
+            if weights is None:
+                loss_cls = cross_entropy(scores, gt_classes, reduction="mean")
+            else:
+                weights = torch.sqrt(weights)
+                weights += 1
+                weights[gt_classes != self.num_classes] /= weights[gt_classes != self.num_classes].mean()
+                loss_cls = cross_entropy(scores, gt_classes, reduction="none")
+                loss_cls = torch.mean(weights*loss_cls)
+
         losses = {
             "loss_cls": loss_cls,
             "loss_box_reg": self.box_reg_loss(
