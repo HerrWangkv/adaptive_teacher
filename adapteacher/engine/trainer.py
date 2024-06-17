@@ -528,10 +528,11 @@ class ATeacherTrainer(DefaultTrainer):
             ret.append(hooks.PeriodicWriter(self.build_writers(), period=20))
         return ret
 
-class ConfusionMatrix(nn.Module):
-    def __init__(self, num_classes):
+class ImbalanceMetric(nn.Module):
+    def __init__(self, num_anchors, num_classes):
         super().__init__()
-        self.register_buffer('mat', torch.zeros((num_classes, num_classes)))
+        self.register_buffer('rpn', torch.zeros(num_anchors))
+        self.register_buffer('roi', torch.zeros((num_classes, num_classes)))
         
 # Targeted Attacked Teacher Trainer
 
@@ -566,7 +567,7 @@ class TATeacherTrainer(ATeacherTrainer):
         )
         self.scheduler = self.build_lr_scheduler(cfg, optimizer)
         self.num_classes = cfg.MODEL.ROI_HEADS.NUM_CLASSES
-        self.global_matrix = ConfusionMatrix(self.num_classes)
+        self.imbalance_metric = ImbalanceMetric(len(cfg.MODEL.ANCHOR_GENERATOR.SIZES[0]) * len(cfg.MODEL.ANCHOR_GENERATOR.ASPECT_RATIOS[0]), self.num_classes)
 
         # Ensemble teacher and student model is for model saving and loading
         ensem_ts_model = EnsembleTSModel(model_teacher, model)
@@ -576,7 +577,7 @@ class TATeacherTrainer(ATeacherTrainer):
             cfg.OUTPUT_DIR,
             optimizer=optimizer,
             scheduler=self.scheduler,
-            global_matrix=self.global_matrix,
+            imbalance_metric=self.imbalance_metric,
         )
         self.start_iter = 0
         self.max_iter = cfg.SOLVER.MAX_ITER
@@ -626,7 +627,7 @@ class TATeacherTrainer(ATeacherTrainer):
             new_proposal_inst.probs = proposal_bbox_inst.probs[valid_map]
 
         return new_proposal_inst
-
+    
     # ======================================================
     # =============== Generate Attack Target ===============
     # ======================================================
@@ -638,9 +639,9 @@ class TATeacherTrainer(ATeacherTrainer):
             new_proposal_inst.soft_classes = torch.zeros((len(pseudo_labels.gt_classes), self.num_classes + 1)).to(pseudo_labels.gt_classes.device)
             for idx in range(len(pseudo_labels.gt_classes)):
                 gt_cls = pseudo_labels.gt_classes[idx]
-                attack_target = self.global_matrix.mat[gt_cls].topk(2)[1][1]
+                attack_target = self.imbalance_metric.roi[gt_cls].topk(2)[1][1]
                 assert attack_target != gt_cls
-                if self.global_matrix.mat[gt_cls, attack_target] < self.global_matrix.mat[attack_target, gt_cls]:
+                if self.imbalance_metric.roi[gt_cls, attack_target] < self.imbalance_metric.roi[attack_target, gt_cls]:
                     new_proposal_inst.gt_classes[idx] = -1 # ignored
                 else:
                     new_proposal_inst.soft_classes[idx, gt_cls] = 0.5
@@ -667,7 +668,8 @@ class TATeacherTrainer(ATeacherTrainer):
 
             # input both strong and weak supervised data into model
             label_data_q.extend(label_data_k)
-            record_dict, local_matrix = self.model(label_data_q, branch="supervised", ret_confusion_matrix=True)
+            record_dict, local_objectness, local_matrix = self.model(label_data_q, branch="supervised", ret_mean_objectness=True, ret_confusion_matrix=True)
+            self.update_mean_objectness(local_objectness)
             self.update_confusion_matrix(local_matrix)
 
             # weight losses
@@ -695,35 +697,18 @@ class TATeacherTrainer(ATeacherTrainer):
             unlabel_data_k = self.remove_label(unlabel_data_k)
 
             #  1. input both strongly and weakly augmented labeled data into student model
-            gt_label_q = self.get_label(label_data_q)
-
-            label_data_q = self.remove_label(label_data_q)
-            targeted_attack_labels = self.generate_targeted_attack_pseudo_labels(
-                gt_label_q
-            )
-            label_data_q = self.add_label(
-                label_data_q, targeted_attack_labels
-            )
-            label_pertubation = self.model_teacher(label_data_q, branch="attack")
-            label_pertubation *= -self.cfg.SEMISUPNET.ATTACK_SEVERITY / torch.tensor(self.cfg.MODEL.PIXEL_STD).to(label_pertubation.device).view(1,-1,1,1)
-            label_data_q = self.remove_label(label_data_q)
-            label_data_q = self.add_label(
-                label_data_q, gt_label_q
-            )
-
             all_label_data = label_data_k + label_data_q
-            label_pertubation = torch.cat([torch.zeros_like(label_pertubation), label_pertubation], dim=0)
-            record_all_label_data, local_matrix = self.model(
-                all_label_data, branch="supervised", ret_confusion_matrix=True, pertubation=label_pertubation
+            record_all_label_data, local_objectness, local_matrix = self.model(
+                all_label_data, branch="supervised",  ret_mean_objectness=True, ret_confusion_matrix=True, rpn_weights=self.imbalance_metric.rpn.to("cuda")
             )
             record_dict.update(record_all_label_data)
-
             #  2. calculate the EMA of confusion matrix
             # Sum local matrix across all GPUs
+            self.update_mean_objectness(local_objectness)
             self.update_confusion_matrix(local_matrix)
             #  3. generate the pseudo-label using teacher model
             with torch.no_grad():
-                proposals_roih_unsup_k = self.model_teacher(unlabel_data_k, branch="unsup_data_weak")
+                proposals_roih_unsup_k, _, _ = self.model_teacher(unlabel_data_k, branch="unsup_data_weak")
 
             #  4. Pseudo-labeling
             cur_threshold = self.cfg.SEMISUPNET.BBOX_THRESHOLD
@@ -741,7 +726,7 @@ class TATeacherTrainer(ATeacherTrainer):
             )
 
             #  6. conduct targeted attack on unlabel_data_q
-            unlabel_pertubation = self.model_teacher(unlabel_data_q, branch="attack")
+            unlabel_pertubation, _, _ = self.model_teacher(unlabel_data_q, branch="attack")
             unlabel_pertubation *= -self.cfg.SEMISUPNET.ATTACK_SEVERITY / torch.tensor(self.cfg.MODEL.PIXEL_STD).to(unlabel_pertubation.device).view(1,-1,1,1)
 
             #  7. set the labels back to pseudo labels generated by the teacher
@@ -754,7 +739,7 @@ class TATeacherTrainer(ATeacherTrainer):
             )
 
             #  8. input strongly augmented unlabeled data into model
-            record_all_unlabel_data = self.model(
+            record_all_unlabel_data, _, _ = self.model(
                 unlabel_data_q, branch="supervised_target", pertubation=unlabel_pertubation
             )
             new_record_all_unlabel_data = {}
@@ -771,7 +756,7 @@ class TATeacherTrainer(ATeacherTrainer):
                     label_data_k[i_index][k + "_unlabeled"] = v
 
             all_domain_data = label_data_k
-            record_all_domain_data = self.model(
+            record_all_domain_data, _, _ = self.model(
                 all_domain_data, branch="domain"
             )
             record_dict.update(record_all_domain_data)
@@ -804,7 +789,27 @@ class TATeacherTrainer(ATeacherTrainer):
         self.optimizer.zero_grad()
         losses.backward()
         self.optimizer.step()
-    
+        
+    def update_mean_objectness(self, local_objectness):
+        if comm.get_world_size() > 1:
+            dist.all_reduce(local_objectness, op=dist.ReduceOp.SUM)
+
+        # Normalize local matrix
+        mask = local_objectness[1]!=0
+        local_objectness[0,mask] = local_objectness[0, mask] / local_objectness[1, mask]
+
+        if (self.imbalance_metric.rpn == 0).all():
+            self.imbalance_metric.rpn = local_objectness[0]
+        else:
+            if self.imbalance_metric.rpn.get_device() == -1:
+                self.imbalance_metric.rpn = self.imbalance_metric.rpn.to(local_objectness.device)
+            self.imbalance_metric.rpn[self.imbalance_metric.rpn == 0] = local_objectness[0, 
+                self.imbalance_metric.rpn == 0
+            ]
+            self.imbalance_metric.rpn[mask] = (
+                self.cfg.SEMISUPNET.EMA_IMBALANCE_METRIC * self.imbalance_metric.rpn[mask]
+                + (1 - self.cfg.SEMISUPNET.EMA_IMBALANCE_METRIC) * local_objectness[0,mask]
+            )
     def update_confusion_matrix(self, local_matrix):
         if comm.get_world_size() > 1:
             dist.all_reduce(local_matrix, op=dist.ReduceOp.SUM)
@@ -814,15 +819,15 @@ class TATeacherTrainer(ATeacherTrainer):
         mask = sum_values!=0
         local_matrix[mask] = local_matrix[mask] / sum_values[mask].view(-1, 1)
 
-        if (self.global_matrix.mat == 0).all():
-            self.global_matrix.mat = local_matrix
+        if (self.imbalance_metric.roi == 0).all():
+            self.imbalance_metric.roi = local_matrix
         else:
-            if self.global_matrix.mat.get_device() == -1:
-                self.global_matrix.mat = self.global_matrix.mat.to(local_matrix.device)
-            self.global_matrix.mat[self.global_matrix.mat.sum(dim=1) == 0] = local_matrix[
-                self.global_matrix.mat.sum(dim=1) == 0
+            if self.imbalance_metric.roi.get_device() == -1:
+                self.imbalance_metric.roi = self.imbalance_metric.roi.to(local_matrix.device)
+            self.imbalance_metric.roi[self.imbalance_metric.roi.sum(dim=1) == 0] = local_matrix[
+                self.imbalance_metric.roi.sum(dim=1) == 0
             ]
-            self.global_matrix.mat[mask] = (
-                self.cfg.SEMISUPNET.EMA_CONFUSION_MATRIX * self.global_matrix.mat[mask]
-                + (1 - self.cfg.SEMISUPNET.EMA_CONFUSION_MATRIX) * local_matrix[mask]
+            self.imbalance_metric.roi[mask] = (
+                self.cfg.SEMISUPNET.EMA_IMBALANCE_METRIC * self.imbalance_metric.roi[mask]
+                + (1 - self.cfg.SEMISUPNET.EMA_IMBALANCE_METRIC) * local_matrix[mask]
             )
