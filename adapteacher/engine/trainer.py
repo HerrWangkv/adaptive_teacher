@@ -638,15 +638,10 @@ class TATeacherTrainer(ATeacherTrainer):
             new_proposal_inst.soft_classes = torch.zeros_like(pseudo_labels.probs)
             for idx in range(len(pseudo_labels.gt_classes)):
                 gt_cls = pseudo_labels.gt_classes[idx]
-                prob = new_proposal_inst.probs[idx]
-                prob[gt_cls] = 0
-                attack_target = torch.argmax(prob)
+                attack_target = self.global_matrix.mat[gt_cls].topk(2)[1][1]
                 assert attack_target != gt_cls
-                if attack_target == self.num_classes:
-                    new_proposal_inst.gt_classes[idx] = -1 # ROI ignores this
-                elif self.global_matrix.mat[gt_cls, attack_target] < self.global_matrix.mat[attack_target, gt_cls]:
-                    new_proposal_inst.soft_classes[idx, gt_cls] = self.cfg.SEMISUPNET.BBOX_THRESHOLD
-                    new_proposal_inst.soft_classes[idx, attack_target] = 1 - self.cfg.SEMISUPNET.BBOX_THRESHOLD
+                if self.global_matrix.mat[gt_cls, attack_target] < self.global_matrix.mat[attack_target, gt_cls]:
+                    new_proposal_inst.gt_classes[idx] = -1 # ignored
                 else:
                     new_proposal_inst.soft_classes[idx, gt_cls] = 0.5
                     new_proposal_inst.soft_classes[idx, attack_target] = 0.5
