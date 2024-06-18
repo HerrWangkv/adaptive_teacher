@@ -455,7 +455,8 @@ class TargetedAttackedGeneralizedRCNN(GeneralizedRCNN):
         pertubation=None,
         ret_confusion_matrix=False,
         ret_mean_objectness=False,
-        rpn_weights=None
+        rpn_weights=None,
+        conf_mat=None,
     ):
         if not self.training:
             return self.inference(batched_inputs)
@@ -603,6 +604,7 @@ class TargetedAttackedGeneralizedRCNN(GeneralizedRCNN):
                 proposals_rpn,
                 gt_instances,
                 branch=branch,
+                conf_mat=conf_mat,
             )
             losses = detector_losses["loss_cls"]#proposal_losses["loss_rpn_cls"] + detector_losses["loss_cls"]
             grad = torch.autograd.grad(

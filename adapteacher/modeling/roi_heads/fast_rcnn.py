@@ -2,6 +2,7 @@
 import torch
 import torch.nn.functional as F
 from typing import List, Tuple
+import numpy as np
 
 from detectron2.layers import cat, cross_entropy, nonzero_tuple, batched_nms
 from detectron2.structures import Boxes, Instances
@@ -11,7 +12,7 @@ from detectron2.modeling.roi_heads.fast_rcnn import (
 )
 
 class FgFastRCNNOutputLayers(FastRCNNOutputLayers):
-    def losses(self, predictions, proposals, branch):
+    def losses(self, predictions, proposals, branch, conf_mat=None):
         """
         Only consider fg loss during attack
         """
@@ -29,11 +30,11 @@ class FgFastRCNNOutputLayers(FastRCNNOutputLayers):
             else torch.empty(0)
         ) if "weights" in proposals[0]._fields else None
 
-        soft_classes = (
-            cat([p.soft_classes for p in proposals], dim=0)
+        attack_classes = (
+            cat([p.attack_classes for p in proposals], dim=0)
             if len(proposals)
-            else torch.empty((0, self.num_classes+1))
-        ) if "soft_classes" in proposals[0]._fields else None
+            else torch.empty(0)
+        ) if "attack_classes" in proposals[0]._fields else None
 
         _log_classification_stats(scores, gt_classes)
 
@@ -63,15 +64,21 @@ class FgFastRCNNOutputLayers(FastRCNNOutputLayers):
 
         if branch == "attack":
             assert weights is None
+            assert conf_mat is not None
             mask = gt_classes != self.num_classes
+            obj_scores = scores.clone().detach()
+            obj_scores[range(len(obj_scores)), gt_classes] = -np.inf
+            attack_classes = torch.argmax(obj_scores[:,:-1], dim=1)
+            mask[gt_classes != self.num_classes] = conf_mat[gt_classes[mask],attack_classes[mask]] > conf_mat[attack_classes[mask],gt_classes[mask]]
+            mask[scores[range(len(obj_scores)),gt_classes] <= scores[range(len(obj_scores)),attack_classes]] = False
             if not mask.any():
                 loss_cls = scores.sum() * 0.0
             else:
-                p = F.log_softmax(scores[mask], dim=1)
-                loss_cls = torch.sum(-soft_classes[mask] * p, dim=1)
+                binary_logits = torch.vstack([scores[mask,gt_classes[mask]], scores[mask,attack_classes[mask]]])
+                loss_cls = torch.sum(-0.5 * torch.log(torch.sigmoid(binary_logits)),dim=0)
                 loss_cls = torch.mean(loss_cls)
         else:
-            assert soft_classes is None
+            assert attack_classes is None
             if weights is None:
                 loss_cls = cross_entropy(scores, gt_classes, reduction="mean")
             else:

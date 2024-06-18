@@ -44,3 +44,5 @@ def add_ateacher_config(cfg):
     _C.MODEL.VGG.NORM = "BN"
     _C.MODEL.VGG.CONV5_OUT_CHANNELS = 512
     _C.MODEL.VGG.PRETRAIN = "./vgg16_caffe.pth"
+
+    _C.SEED = 46103230
