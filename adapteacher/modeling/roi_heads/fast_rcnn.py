@@ -24,11 +24,6 @@ class FgFastRCNNOutputLayers(FastRCNNOutputLayers):
             if len(proposals)
             else torch.empty(0)
         )
-        weights = (
-            cat([p.weights for p in proposals], dim=0)
-            if len(proposals)
-            else torch.empty(0)
-        ) if "weights" in proposals[0]._fields else None
 
         attack_classes = (
             cat([p.attack_classes for p in proposals], dim=0)
@@ -63,7 +58,6 @@ class FgFastRCNNOutputLayers(FastRCNNOutputLayers):
             )
 
         if branch == "attack":
-            assert weights is None
             assert conf_mat is not None
             mask = gt_classes != self.num_classes
             obj_scores = scores.clone().detach()
@@ -78,15 +72,57 @@ class FgFastRCNNOutputLayers(FastRCNNOutputLayers):
                 loss_cls = torch.sum(-0.5 * torch.log(torch.sigmoid(binary_logits)),dim=0)
                 loss_cls = torch.mean(loss_cls)
         else:
-            assert attack_classes is None
-            if weights is None:
+            if conf_mat is None:
                 loss_cls = cross_entropy(scores, gt_classes, reduction="mean")
             else:
-                weights = torch.sqrt(weights)
-                weights += 1
-                weights[gt_classes != self.num_classes] /= weights[gt_classes != self.num_classes].mean()
-                loss_cls = cross_entropy(scores, gt_classes, reduction="none")
-                loss_cls = torch.mean(weights*loss_cls)
+                pred_classes = torch.max(scores,dim=1).indices
+                w = torch.ones_like(gt_classes)*1.0
+                ci = conf_mat.clone()
+
+                # Removing background and splitting into correct and incorrect
+                m_correct = torch.logical_and(torch.logical_and(gt_classes == pred_classes,pred_classes!=self.num_classes),gt_classes!=self.num_classes)
+                m_incorrect = torch.logical_and(torch.logical_and(gt_classes != pred_classes,pred_classes!=self.num_classes),gt_classes!=self.num_classes)
+                
+                
+                idx_correct = torch.stack((gt_classes[m_correct],pred_classes[m_correct]))
+                idx_incorrect = torch.stack((gt_classes[m_incorrect],pred_classes[m_incorrect]))
+                
+                zero_check = torch.sum(ci,dim=1)==0
+                if torch.any(zero_check):
+                    for i,b in enumerate(zero_check):
+                        if b:
+                            ci[i]=torch.ones_like(ci[i])/self.num_classes
+                for i in range(ci.shape[0]):
+                    if ci[i,i] == 0:
+                        ci[i,i] = 1/self.num_classes
+                ci[ci==0]=0.001
+
+                for i,b in enumerate(ci):
+                    for j,v in enumerate(ci[i]):
+                        if j==i: 
+                            continue
+                        else:
+                            ci[i,j] = (v/ci[i,i])**0.5
+                    ci[i,i] = 1-(1-ci[i,i])**0.5
+
+                w[m_correct]=1-ci[idx_correct[0],idx_correct[1]].to(w.device)
+                w[m_incorrect]=ci[idx_incorrect[0],idx_incorrect[1]].to(w.device)
+                w_c = torch.cat((w[m_correct],w[m_incorrect]))
+    
+                mean_w = torch.mean(w_c)
+                if mean_w == 0:
+                    mean_w = 1
+                
+                w[w==0]=0.00001
+                w[torch.isnan(w)]=0.00001
+                w[m_correct]= w[m_correct]/mean_w
+                w[m_incorrect]= w[m_incorrect]/mean_w
+                
+                w = (w+1)/2
+                if torch.any(torch.isnan(w)):
+                    w[torch.isnan(w)] = 0.0
+                loss_cls = torch.mean(cross_entropy(scores, gt_classes, reduction="none")*w)
+
 
         losses = {
             "loss_cls": loss_cls,

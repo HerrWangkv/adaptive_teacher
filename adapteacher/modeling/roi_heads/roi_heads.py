@@ -313,17 +313,14 @@ class FgPseudoROIHeads(StandardROIHeads):
                 targets_per_image.gt_boxes, proposals_per_image.proposal_boxes
             )
             matched_idxs, matched_labels = self.proposal_matcher(match_quality_matrix)
-            weights = targets_per_image.weights if "weights" in targets_per_image._fields else None
             attack_classes = targets_per_image.attack_classes if "attack_classes" in targets_per_image._fields else None
-            sampled_idxs, gt_classes, weights, attack_classes = self._sample_proposals(
-                matched_idxs, matched_labels, targets_per_image.gt_classes, weights=weights, attack_classes=attack_classes
+            sampled_idxs, gt_classes, attack_classes = self._sample_proposals(
+                matched_idxs, matched_labels, targets_per_image.gt_classes, attack_classes=attack_classes
             )
 
             # Set target attributes of the sampled proposals:
             proposals_per_image = proposals_per_image[sampled_idxs]
             proposals_per_image.gt_classes = gt_classes
-            if weights is not None:
-                proposals_per_image.weights = weights
             if attack_classes is not None:
                 proposals_per_image.attack_classes = attack_classes
 
@@ -354,14 +351,12 @@ class FgPseudoROIHeads(StandardROIHeads):
         return proposals_with_gt
 
     def _sample_proposals(
-        self, matched_idxs: torch.Tensor, matched_labels: torch.Tensor, gt_classes: torch.Tensor, weights=None, attack_classes=None
+        self, matched_idxs: torch.Tensor, matched_labels: torch.Tensor, gt_classes: torch.Tensor, attack_classes=None
     ) -> Tuple[torch.Tensor, torch.Tensor]:
         """
         add weight and attack_classes if necessary
         """
         has_gt = gt_classes.numel() > 0
-        ret_weight = weights is not None
-        has_weight = ret_weight and has_gt
         ret_attack = attack_classes is not None
         has_attack = ret_attack and has_gt
         # Get the corresponding GT for each proposal
@@ -371,10 +366,6 @@ class FgPseudoROIHeads(StandardROIHeads):
             gt_classes[matched_labels == 0] = self.num_classes
             # Label ignore proposals (-1 label)
             gt_classes[matched_labels == -1] = -1
-            if has_weight:
-                weights = weights[matched_idxs]
-                weights[matched_labels == 0] = 0
-                weights[matched_labels == -1] = -1
             if has_attack:
                 attack_classes = attack_classes[matched_idxs]
                 attack_classes[matched_labels == 0] = self.num_classes
@@ -382,8 +373,6 @@ class FgPseudoROIHeads(StandardROIHeads):
 
         else:
             gt_classes = torch.zeros_like(matched_idxs) + self.num_classes
-            if ret_weight:
-                weights = torch.zeros_like(matched_idxs)
             if ret_attack:
                 attack_classes = torch.zeros_like(matched_idxs) + self.num_classes
 
@@ -392,4 +381,4 @@ class FgPseudoROIHeads(StandardROIHeads):
         )
 
         sampled_idxs = torch.cat([sampled_fg_idxs, sampled_bg_idxs], dim=0)
-        return sampled_idxs, gt_classes[sampled_idxs], weights[sampled_idxs] if ret_weight else None, attack_classes[sampled_idxs] if ret_attack else None
+        return sampled_idxs, gt_classes[sampled_idxs], attack_classes[sampled_idxs] if ret_attack else None

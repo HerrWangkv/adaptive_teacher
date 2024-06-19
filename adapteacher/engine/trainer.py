@@ -678,7 +678,7 @@ class TATeacherTrainer(ATeacherTrainer):
             #  1. input both strongly and weakly augmented labeled data into student model
             all_label_data = label_data_k + label_data_q
             record_all_label_data, local_objectness, local_matrix = self.model(
-                all_label_data, branch="supervised",  ret_mean_objectness=True, ret_confusion_matrix=True, rpn_weights=self.imbalance_metric.rpn.to("cuda")
+                all_label_data, branch="supervised",  ret_mean_objectness=True, ret_confusion_matrix=True#, rpn_weights=self.imbalance_metric.rpn.to("cuda")
             )
             record_dict.update(record_all_label_data)
             #  2. calculate the EMA of confusion matrix
@@ -710,7 +710,7 @@ class TATeacherTrainer(ATeacherTrainer):
 
             #  6. input strongly augmented unlabeled data into model
             record_all_unlabel_data, _, _ = self.model(
-                unlabel_data_q, branch="supervised_target", pertubation=unlabel_pertubation
+                unlabel_data_q, branch="supervised_target", pertubation=unlabel_pertubation, conf_mat = self.imbalance_metric.roi
             )
             new_record_all_unlabel_data = {}
             for key in record_all_unlabel_data.keys():

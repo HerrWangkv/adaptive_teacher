@@ -549,7 +549,7 @@ class TargetedAttackedGeneralizedRCNN(GeneralizedRCNN):
 
             # ROI
             proposals_predictions, detector_losses = self.roi_heads(
-                images, features, proposals_rpn, gt_instances, branch=branch
+                images, features, proposals_rpn, gt_instances, branch=branch, conf_mat=conf_mat,
             )
             if ret_confusion_matrix:
                 confusion_matrix = self.calculate_confusion_matrix(proposals_predictions)
