@@ -213,8 +213,7 @@ class FgPseudoRPN(RPN):
             smooth_l1_beta=self.smooth_l1_beta,
         )
 
-        if branch == "attack":
-            assert anchor_info is not None
+        if branch == "attack" and anchor_info is not None:
             mask = torch.logical_and(gt_labels == 1, anchor_info < anchor_info.mean())
             mask[cat(pred_objectness_logits, dim=1)<=0] = False 
             target = torch.ones_like(gt_labels) * 0.5

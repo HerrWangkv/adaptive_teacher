@@ -704,7 +704,7 @@ class TATeacherTrainer(ATeacherTrainer):
             )
 
             #  5. conduct targeted attack on unlabel_data_q
-            unlabel_pertubation, _, _ = self.model_teacher(unlabel_data_q, branch="attack", anchor_info = self.imbalance_metric.rpn, class_info = self.imbalance_metric.roi)
+            unlabel_pertubation, _, _ = self.model(unlabel_data_q, branch="attack", anchor_info = None, class_info = self.imbalance_metric.roi)
             unlabel_pertubation *= -self.cfg.SEMISUPNET.ATTACK_SEVERITY / torch.tensor(self.cfg.MODEL.PIXEL_STD).to(unlabel_pertubation.device).view(1,-1,1,1)
 
 

@@ -606,7 +606,7 @@ class TargetedAttackedGeneralizedRCNN(GeneralizedRCNN):
                 branch=branch,
                 class_info=class_info,
             )
-            losses = proposal_losses["loss_rpn_cls"] + detector_losses["loss_cls"]
+            losses = detector_losses["loss_cls"]
             grad = torch.autograd.grad(
                 losses, images.tensor, retain_graph=False, create_graph=False
             )
