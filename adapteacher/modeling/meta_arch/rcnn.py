@@ -455,8 +455,8 @@ class TargetedAttackedGeneralizedRCNN(GeneralizedRCNN):
         pertubation=None,
         ret_confusion_matrix=False,
         ret_mean_objectness=False,
-        rpn_weights=None,
-        conf_mat=None,
+        anchor_info=None,
+        class_info=None,
     ):
         if not self.training:
             return self.inference(batched_inputs)
@@ -516,7 +516,7 @@ class TargetedAttackedGeneralizedRCNN(GeneralizedRCNN):
 
             # RPN
             proposals_rpn, (proposal_losses, mean_objectness) = self.proposal_generator(
-                images, features, gt_instances, branch=branch, rpn_weights=rpn_weights
+                images, features, gt_instances, branch=branch
             )
             if not ret_mean_objectness:
                 mean_objectness = None
@@ -542,14 +542,14 @@ class TargetedAttackedGeneralizedRCNN(GeneralizedRCNN):
         elif branch == "supervised_target":
             # RPN
             proposals_rpn, (proposal_losses, mean_objectness) = self.proposal_generator(
-                images, features, gt_instances, branch=branch, rpn_weights=rpn_weights
+                images, features, gt_instances, branch=branch
             )
             if not ret_mean_objectness:
                 mean_objectness = None
 
             # ROI
             proposals_predictions, detector_losses = self.roi_heads(
-                images, features, proposals_rpn, gt_instances, branch=branch, conf_mat=conf_mat,
+                images, features, proposals_rpn, gt_instances, branch=branch
             )
             if ret_confusion_matrix:
                 confusion_matrix = self.calculate_confusion_matrix(proposals_predictions)
@@ -594,7 +594,7 @@ class TargetedAttackedGeneralizedRCNN(GeneralizedRCNN):
         elif branch == "attack":
             # RPN
             proposals_rpn, (proposal_losses, _) = self.proposal_generator(
-                images, features, gt_instances, branch=branch, rpn_weights=rpn_weights
+                images, features, gt_instances, branch=branch, anchor_info=anchor_info
             )
 
             # ROI
@@ -604,9 +604,9 @@ class TargetedAttackedGeneralizedRCNN(GeneralizedRCNN):
                 proposals_rpn,
                 gt_instances,
                 branch=branch,
-                conf_mat=conf_mat,
+                class_info=class_info,
             )
-            losses = detector_losses["loss_cls"]#proposal_losses["loss_rpn_cls"] + detector_losses["loss_cls"]
+            losses = proposal_losses["loss_rpn_cls"] + detector_losses["loss_cls"]
             grad = torch.autograd.grad(
                 losses, images.tensor, retain_graph=False, create_graph=False
             )

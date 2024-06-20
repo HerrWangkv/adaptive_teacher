@@ -121,7 +121,7 @@ class FgPseudoRPN(RPN):
         features: Dict[str, torch.Tensor],
         gt_instances: Optional[List[Instances]] = None,
         branch: str = "",
-        rpn_weights=None,
+        anchor_info=None,
     ):
         """
         Add branch control & loss  branch control
@@ -146,9 +146,9 @@ class FgPseudoRPN(RPN):
             .flatten(1, -2)
             for x in pred_anchor_deltas
         ]
-        if rpn_weights is not None:
+        if anchor_info is not None:
             # (A) -> (N, Hi*Wi*A)
-            rpn_weights = torch.sqrt(1-rpn_weights).repeat(N,H,W,1).flatten(1)
+            anchor_info = anchor_info.clone().expand(N,H,W,-1).flatten(1)
 
         if self.training and branch in ["supervised", "supervised_target", "attack"]:
             assert gt_instances is not None, "RPN requires gt_instances in training!"
@@ -161,7 +161,8 @@ class FgPseudoRPN(RPN):
                 gt_labels,
                 pred_anchor_deltas,
                 gt_boxes,
-                rpn_weights
+                branch,
+                anchor_info
             )
             objectness = torch.sigmoid(cat(pred_objectness_logits, dim=1)).view(N, H, W, -1).flatten(end_dim=2)
             tp_mask = (cat(gt_labels)==1).view(N, H, W, -1).flatten(end_dim=2)
@@ -185,10 +186,11 @@ class FgPseudoRPN(RPN):
         gt_labels: List[torch.Tensor],
         pred_anchor_deltas: List[torch.Tensor],
         gt_boxes: List[torch.Tensor],
-        rpn_weights=None
+        branch: str,
+        anchor_info=None
     ) -> Dict[str, torch.Tensor]:
         """
-        Add rpn_weights
+        Add branch and anchor_info
         """
         num_images = len(gt_labels)
         gt_labels = torch.stack(gt_labels)  # (N, sum(Hi*Wi*Ai))
@@ -211,19 +213,20 @@ class FgPseudoRPN(RPN):
             smooth_l1_beta=self.smooth_l1_beta,
         )
 
-        valid_mask = gt_labels >= 0
-        if rpn_weights is not None:
+        if branch == "attack":
+            assert anchor_info is not None
+            mask = torch.logical_and(gt_labels == 1, anchor_info < anchor_info.mean())
+            mask[cat(pred_objectness_logits, dim=1)<=0] = False 
+            target = torch.ones_like(gt_labels) * 0.5
             objectness_loss = F.binary_cross_entropy_with_logits(
-                cat(pred_objectness_logits, dim=1)[valid_mask],
-                gt_labels[valid_mask].to(torch.float32),
-                reduction="none",
+                cat(pred_objectness_logits, dim=1)[mask],
+                target[mask].to(torch.float32),
+                reduction="sum",
             )
-            if (gt_labels==1).any():
-                rpn_weights[gt_labels==1] /= rpn_weights[gt_labels==1].mean()
-            rpn_weights[gt_labels==0] = 1
-            objectness_loss = torch.sum(objectness_loss * rpn_weights[valid_mask])
 
         else:
+            assert anchor_info is None
+            valid_mask = gt_labels >= 0
             objectness_loss = F.binary_cross_entropy_with_logits(
                 cat(pred_objectness_logits, dim=1)[valid_mask],
                 gt_labels[valid_mask].to(torch.float32),

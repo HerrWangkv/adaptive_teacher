@@ -236,7 +236,7 @@ class FgPseudoROIHeads(StandardROIHeads):
         proposals: List[Instances],
         targets: Optional[List[Instances]] = None,
         branch: str = "",
-        conf_mat=None,
+        class_info=None,
     ) -> Tuple[List[Instances], Dict[str, torch.Tensor]]:
         """
         also return predictions
@@ -249,10 +249,10 @@ class FgPseudoROIHeads(StandardROIHeads):
         del targets
 
         if self.training and branch in ["supervised", "supervised_target", "attack"]:
-            losses, predictions = self._forward_box(features, proposals, branch, conf_mat)
+            losses, predictions = self._forward_box(features, proposals, branch, class_info)
             return (proposals, predictions), losses
         elif not self.training or branch == "unsup_data_weak":
-            pred_instances, predictions = self._forward_box(features, proposals, branch, conf_mat)
+            pred_instances, predictions = self._forward_box(features, proposals, branch, class_info)
             return pred_instances, predictions
         else:
             raise ValueError(f"Unknown branch {branch}!")
@@ -262,7 +262,7 @@ class FgPseudoROIHeads(StandardROIHeads):
         features: Dict[str, torch.Tensor],
         proposals: List[Instances],
         branch: str,
-        conf_mat=None,
+        class_info=None,
     ):
         """
         also return predictions
@@ -275,7 +275,7 @@ class FgPseudoROIHeads(StandardROIHeads):
 
         if self.training and branch != "unsup_data_weak":
             losses = self.box_predictor.losses(
-                predictions, proposals, branch, conf_mat
+                predictions, proposals, branch, class_info
             )
             return losses, predictions
         else:

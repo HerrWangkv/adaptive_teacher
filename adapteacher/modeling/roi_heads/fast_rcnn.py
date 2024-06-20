@@ -12,7 +12,7 @@ from detectron2.modeling.roi_heads.fast_rcnn import (
 )
 
 class FgFastRCNNOutputLayers(FastRCNNOutputLayers):
-    def losses(self, predictions, proposals, branch, conf_mat=None):
+    def losses(self, predictions, proposals, branch, class_info=None):
         """
         Only consider fg loss during attack
         """
@@ -58,12 +58,12 @@ class FgFastRCNNOutputLayers(FastRCNNOutputLayers):
             )
 
         if branch == "attack":
-            assert conf_mat is not None
+            assert class_info is not None
             mask = gt_classes != self.num_classes
             obj_scores = scores.clone().detach()
             obj_scores[range(len(obj_scores)), gt_classes] = -np.inf
             attack_classes = torch.argmax(obj_scores[:,:-1], dim=1)
-            mask[gt_classes != self.num_classes] = conf_mat[gt_classes[mask],attack_classes[mask]] > conf_mat[attack_classes[mask],gt_classes[mask]]
+            mask[gt_classes != self.num_classes] = class_info[gt_classes[mask],attack_classes[mask]] > class_info[attack_classes[mask],gt_classes[mask]]
             mask[scores[range(len(obj_scores)),gt_classes] <= scores[range(len(obj_scores)),attack_classes]] = False
             if not mask.any():
                 loss_cls = scores.sum() * 0.0
@@ -72,56 +72,56 @@ class FgFastRCNNOutputLayers(FastRCNNOutputLayers):
                 loss_cls = torch.sum(-0.5 * torch.log(torch.sigmoid(binary_logits)),dim=0)
                 loss_cls = torch.mean(loss_cls)
         else:
-            if conf_mat is None:
-                loss_cls = cross_entropy(scores, gt_classes, reduction="mean")
-            else:
-                pred_classes = torch.max(scores,dim=1).indices
-                w = torch.ones_like(gt_classes)*1.0
-                ci = conf_mat.clone()
+            assert class_info is None
+            loss_cls = cross_entropy(scores, gt_classes, reduction="mean")
+            # else:
+            #     pred_classes = torch.max(scores,dim=1).indices
+            #     w = torch.ones_like(gt_classes)*1.0
+            #     ci = class_info.clone()
 
-                # Removing background and splitting into correct and incorrect
-                m_correct = torch.logical_and(torch.logical_and(gt_classes == pred_classes,pred_classes!=self.num_classes),gt_classes!=self.num_classes)
-                m_incorrect = torch.logical_and(torch.logical_and(gt_classes != pred_classes,pred_classes!=self.num_classes),gt_classes!=self.num_classes)
+            #     # Removing background and splitting into correct and incorrect
+            #     m_correct = torch.logical_and(torch.logical_and(gt_classes == pred_classes,pred_classes!=self.num_classes),gt_classes!=self.num_classes)
+            #     m_incorrect = torch.logical_and(torch.logical_and(gt_classes != pred_classes,pred_classes!=self.num_classes),gt_classes!=self.num_classes)
                 
                 
-                idx_correct = torch.stack((gt_classes[m_correct],pred_classes[m_correct]))
-                idx_incorrect = torch.stack((gt_classes[m_incorrect],pred_classes[m_incorrect]))
+            #     idx_correct = torch.stack((gt_classes[m_correct],pred_classes[m_correct]))
+            #     idx_incorrect = torch.stack((gt_classes[m_incorrect],pred_classes[m_incorrect]))
                 
-                zero_check = torch.sum(ci,dim=1)==0
-                if torch.any(zero_check):
-                    for i,b in enumerate(zero_check):
-                        if b:
-                            ci[i]=torch.ones_like(ci[i])/self.num_classes
-                for i in range(ci.shape[0]):
-                    if ci[i,i] == 0:
-                        ci[i,i] = 1/self.num_classes
-                ci[ci==0]=0.001
+            #     zero_check = torch.sum(ci,dim=1)==0
+            #     if torch.any(zero_check):
+            #         for i,b in enumerate(zero_check):
+            #             if b:
+            #                 ci[i]=torch.ones_like(ci[i])/self.num_classes
+            #     for i in range(ci.shape[0]):
+            #         if ci[i,i] == 0:
+            #             ci[i,i] = 1/self.num_classes
+            #     ci[ci==0]=0.001
 
-                for i,b in enumerate(ci):
-                    for j,v in enumerate(ci[i]):
-                        if j==i: 
-                            continue
-                        else:
-                            ci[i,j] = (v/ci[i,i])**0.5
-                    ci[i,i] = 1-(1-ci[i,i])**0.5
+            #     for i,b in enumerate(ci):
+            #         for j,v in enumerate(ci[i]):
+            #             if j==i: 
+            #                 continue
+            #             else:
+            #                 ci[i,j] = (v/ci[i,i])**0.5
+            #         ci[i,i] = 1-(1-ci[i,i])**0.5
 
-                w[m_correct]=1-ci[idx_correct[0],idx_correct[1]].to(w.device)
-                w[m_incorrect]=ci[idx_incorrect[0],idx_incorrect[1]].to(w.device)
-                w_c = torch.cat((w[m_correct],w[m_incorrect]))
+            #     w[m_correct]=1-ci[idx_correct[0],idx_correct[1]].to(w.device)
+            #     w[m_incorrect]=ci[idx_incorrect[0],idx_incorrect[1]].to(w.device)
+            #     w_c = torch.cat((w[m_correct],w[m_incorrect]))
     
-                mean_w = torch.mean(w_c)
-                if mean_w == 0:
-                    mean_w = 1
+            #     mean_w = torch.mean(w_c)
+            #     if mean_w == 0:
+            #         mean_w = 1
                 
-                w[w==0]=0.00001
-                w[torch.isnan(w)]=0.00001
-                w[m_correct]= w[m_correct]/mean_w
-                w[m_incorrect]= w[m_incorrect]/mean_w
+            #     w[w==0]=0.00001
+            #     w[torch.isnan(w)]=0.00001
+            #     w[m_correct]= w[m_correct]/mean_w
+            #     w[m_incorrect]= w[m_incorrect]/mean_w
                 
-                w = (w+1)/2
-                if torch.any(torch.isnan(w)):
-                    w[torch.isnan(w)] = 0.0
-                loss_cls = torch.mean(cross_entropy(scores, gt_classes, reduction="none")*w)
+            #     w = (w+1)/2
+            #     if torch.any(torch.isnan(w)):
+            #         w[torch.isnan(w)] = 0.0
+            #     loss_cls = torch.mean(cross_entropy(scores, gt_classes, reduction="none")*w)
 
 
         losses = {
