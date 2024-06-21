@@ -57,7 +57,7 @@ class FgFastRCNNOutputLayers(FastRCNNOutputLayers):
                 (0, 4), device=proposal_deltas.device
             )
 
-        if branch == "attack":
+        if branch == "attack_major":
             assert class_info is not None
             mask = gt_classes != self.num_classes
             obj_scores = scores.clone().detach()
@@ -71,6 +71,20 @@ class FgFastRCNNOutputLayers(FastRCNNOutputLayers):
                 binary_logits = torch.vstack([scores[mask,gt_classes[mask]], scores[mask,attack_classes[mask]]])
                 loss_cls = torch.sum(-0.5 * torch.log(torch.softmax(binary_logits,dim=0)),dim=0)
                 loss_cls = torch.mean(loss_cls)
+        elif branch == "attack_back":
+            assert class_info is not None
+            mask = torch.eq(proposal_boxes,gt_boxes).all(dim=1)
+            assert not (gt_classes[mask]==self.num_classes).any()
+            obj_scores = scores.clone().detach()
+            mask[torch.eq(proposal_boxes,gt_boxes).all(dim=1)] = class_info[gt_classes[mask],gt_classes[mask]] < torch.mean(class_info.diagonal())
+            mask[scores[range(len(obj_scores)),gt_classes] <= scores[:,-1]] = False
+            if not mask.any():
+                loss_cls = scores.sum() * 0.0
+            else:
+                binary_logits = torch.vstack([scores[mask,gt_classes[mask]], scores[mask,self.num_classes]])
+                loss_cls = torch.sum(-0.5 * torch.log(torch.softmax(binary_logits,dim=0)),dim=0)
+                loss_cls = torch.mean(loss_cls)
+
         else:
             assert class_info is None
             loss_cls = cross_entropy(scores, gt_classes, reduction="mean")

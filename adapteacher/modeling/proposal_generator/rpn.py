@@ -150,7 +150,7 @@ class FgPseudoRPN(RPN):
             # (A) -> (N, Hi*Wi*A)
             anchor_info = anchor_info.clone().expand(N,H,W,-1).flatten(1)
 
-        if self.training and branch in ["supervised", "supervised_target", "attack"]:
+        if self.training and branch in ["supervised", "supervised_target", "attack_major", "attack_back"]:
             assert gt_instances is not None, "RPN requires gt_instances in training!"
             gt_labels, gt_boxes = self.label_and_sample_anchors(
                 anchors, gt_instances
@@ -213,7 +213,7 @@ class FgPseudoRPN(RPN):
             smooth_l1_beta=self.smooth_l1_beta,
         )
 
-        if branch == "attack" and anchor_info is not None:
+        if branch.startswith("attack") and anchor_info is not None:
             mask = torch.logical_and(gt_labels == 1, anchor_info < anchor_info.mean())
             mask[cat(pred_objectness_logits, dim=1)<=0] = False 
             target = torch.ones_like(gt_labels) * 0.5
