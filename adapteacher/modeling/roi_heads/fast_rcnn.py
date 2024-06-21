@@ -69,7 +69,7 @@ class FgFastRCNNOutputLayers(FastRCNNOutputLayers):
                 loss_cls = scores.sum() * 0.0
             else:
                 binary_logits = torch.vstack([scores[mask,gt_classes[mask]], scores[mask,attack_classes[mask]]])
-                loss_cls = torch.sum(-0.5 * torch.log(torch.sigmoid(binary_logits)),dim=0)
+                loss_cls = torch.sum(-0.5 * torch.log(torch.softmax(binary_logits,dim=0)),dim=0)
                 loss_cls = torch.mean(loss_cls)
         else:
             assert class_info is None
