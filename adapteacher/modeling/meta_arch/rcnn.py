@@ -495,7 +495,7 @@ class TargetedAttackedGeneralizedRCNN(GeneralizedRCNN):
         images = self.preprocess_image(batched_inputs)
         if pertubation is not None:
             images.tensor = self.clip(images.tensor, pertubation)
-        if branch.startswith("attack"):
+        if branch == "attack":
             images.tensor.requires_grad_(True)
         if "instances" in batched_inputs[0]:
             gt_instances = [x["instances"].to(self.device) for x in batched_inputs]
@@ -591,7 +591,7 @@ class TargetedAttackedGeneralizedRCNN(GeneralizedRCNN):
 
             return proposals_roih, None, None
 
-        elif branch.startswith("attack"):
+        elif branch == "attack":
             # RPN
             proposals_rpn, (proposal_losses, _) = self.proposal_generator(
                 images, features, gt_instances, branch=branch, anchor_info=anchor_info

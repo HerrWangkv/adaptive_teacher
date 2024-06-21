@@ -242,13 +242,13 @@ class FgPseudoROIHeads(StandardROIHeads):
         also return predictions
         """
         del images
-        if self.training and branch in ["supervised", "supervised_target", "attack_major", "attack_back"]:
+        if self.training and branch in ["supervised", "supervised_target", "attack"]:
             assert targets, "'targets' argument is required during training"
             # Targets with gt_classes -1 will be ignored
             proposals = self.label_and_sample_proposals(proposals, targets)
         del targets
 
-        if self.training and branch in ["supervised", "supervised_target", "attack_major", "attack_back"]:
+        if self.training and branch in ["supervised", "supervised_target", "attack"]:
             losses, predictions = self._forward_box(features, proposals, branch, class_info)
             return (proposals, predictions), losses
         elif not self.training or branch == "unsup_data_weak":

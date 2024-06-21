@@ -677,10 +677,8 @@ class TATeacherTrainer(ATeacherTrainer):
 
             #  1. input both strongly and weakly augmented labeled data into student model
             all_label_data = label_data_k + label_data_q
-            label_pertubation, _, _ = self.model_teacher(all_label_data, branch="attack_back", class_info = self.imbalance_metric.roi.to("cuda"))
-            label_pertubation *= -self.cfg.SEMISUPNET.ATTACK_SEVERITY / torch.tensor(self.cfg.MODEL.PIXEL_STD).to(label_pertubation.device).view(1,-1,1,1)
             record_all_label_data, local_objectness, local_matrix = self.model(
-                all_label_data, branch="supervised",  ret_mean_objectness=True, ret_confusion_matrix=True, pertubation= label_pertubation
+                all_label_data, branch="supervised",  ret_mean_objectness=True, ret_confusion_matrix=True#, rpn_weights=self.imbalance_metric.rpn.to("cuda")
             )
             record_dict.update(record_all_label_data)
             #  2. calculate the EMA of confusion matrix
@@ -706,7 +704,7 @@ class TATeacherTrainer(ATeacherTrainer):
             )
 
             #  5. conduct targeted attack on unlabel_data_q
-            unlabel_pertubation, _, _ = self.model_teacher(unlabel_data_q, branch="attack_major", class_info = self.imbalance_metric.roi)
+            unlabel_pertubation, _, _ = self.model_teacher(unlabel_data_q, branch="attack", class_info = self.imbalance_metric.roi)
             unlabel_pertubation *= -self.cfg.SEMISUPNET.ATTACK_SEVERITY / torch.tensor(self.cfg.MODEL.PIXEL_STD).to(unlabel_pertubation.device).view(1,-1,1,1)
 
 
