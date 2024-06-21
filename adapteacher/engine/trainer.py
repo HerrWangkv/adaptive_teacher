@@ -4,6 +4,7 @@ import time
 import logging
 import torch
 from torch import nn
+import torch.nn.functional as F
 from torch.nn.parallel import DistributedDataParallel
 import torch.distributed as dist
 from fvcore.nn.precise_bn import get_bn_modules
@@ -40,6 +41,7 @@ from adapteacher.evaluation import PascalVOCDetectionEvaluator, COCOEvaluator
 
 from .probe import OpenMatchTrainerProbe
 import copy
+import random
 
 # Adaptive Teacher Trainer
 class ATeacherTrainer(DefaultTrainer):
@@ -676,6 +678,7 @@ class TATeacherTrainer(ATeacherTrainer):
             unlabel_data_k = self.remove_label(unlabel_data_k)
 
             #  1. input both strongly and weakly augmented labeled data into student model
+            label_data_q = self.resize(label_data_q)
             all_label_data = label_data_k + label_data_q
             record_all_label_data, local_objectness, local_matrix = self.model(
                 all_label_data, branch="supervised",  ret_mean_objectness=True, ret_confusion_matrix=True#, rpn_weights=self.imbalance_metric.rpn.to("cuda")
@@ -801,3 +804,48 @@ class TATeacherTrainer(ATeacherTrainer):
                 self.cfg.SEMISUPNET.EMA_IMBALANCE_METRIC * self.imbalance_metric.roi[mask]
                 + (1 - self.cfg.SEMISUPNET.EMA_IMBALANCE_METRIC) * local_matrix[mask]
             )
+    def resize(self, data):
+        data = copy.deepcopy(data)
+        bs = len(data)
+        for i in range(bs):
+            img = data[i]["image"]
+            h, w = img.shape[-2], img.shape[-1]
+            ratio = random.uniform(0.5, 2.0)
+            if ratio < 1:
+                d_h, d_w = int(h * ratio), int(w)
+            else:
+                d_h, d_w = int(h), int(w / ratio)
+
+            x1 = int((w - d_w) / 2)
+            y1 = int((h - d_h) / 2)
+            bg = torch.zeros_like(img)
+            try:
+                bg += self.model.pixel_mean.cpu().int()
+            except:
+                bg += self.model.module.pixel_mean.cpu().int()
+            bg[:, y1 : y1 + d_h, x1 : x1 + d_w] = F.interpolate(
+                img.unsqueeze(0).float(),
+                size=(d_h, d_w),
+                align_corners=False,
+                mode="bilinear",
+            ).squeeze(0)
+            data[i]["image"] = bg
+            if data[i]["instances"].has("gt_boxes"):
+                if ratio < 1:
+                    data[i]["instances"].gt_boxes.tensor[:,1] *= ratio
+                    data[i]["instances"].gt_boxes.tensor[:,3] *= ratio
+                else:
+                    data[i]["instances"].gt_boxes.tensor[:,0] /= ratio
+                    data[i]["instances"].gt_boxes.tensor[:,2] /= ratio
+                data[i]["instances"].gt_boxes.tensor[:, 0] += x1
+                data[i]["instances"].gt_boxes.tensor[:, 2] += x1
+                data[i]["instances"].gt_boxes.tensor[:, 1] += y1
+                data[i]["instances"].gt_boxes.tensor[:, 3] += y1
+                data[i]["instances"].gt_boxes.tensor = data[i][
+                    "instances"
+                ].gt_boxes.tensor
+                data[i]["instances"].gt_classes = data[i]["instances"].gt_classes
+
+            if data[i]["instances"].has("pseudo_boxes"):
+                raise NotImplemented
+        return data
