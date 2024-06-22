@@ -678,7 +678,6 @@ class TATeacherTrainer(ATeacherTrainer):
             unlabel_data_k = self.remove_label(unlabel_data_k)
 
             #  1. input both strongly and weakly augmented labeled data into student model
-            label_data_q = self.resize(label_data_q)
             all_label_data = label_data_k + label_data_q
             record_all_label_data, local_objectness, local_matrix = self.model(
                 all_label_data, branch="supervised",  ret_mean_objectness=True, ret_confusion_matrix=True#, rpn_weights=self.imbalance_metric.rpn.to("cuda")
@@ -702,6 +701,7 @@ class TATeacherTrainer(ATeacherTrainer):
             unlabel_data_q = self.add_label(
                 unlabel_data_q, pesudo_proposals_roih_unsup_k
             )
+            unlabel_data_q = self.resize(unlabel_data_q)
             unlabel_data_k = self.add_label(
                 unlabel_data_k, pesudo_proposals_roih_unsup_k
             )
