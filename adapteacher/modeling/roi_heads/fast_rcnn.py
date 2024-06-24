@@ -59,13 +59,15 @@ class FgFastRCNNOutputLayers(FastRCNNOutputLayers):
 
         if branch == "attack":
             assert class_info is not None
-            info = class_info.clone().detach()
-            info[range(len(info)), range(len(info))] = 0
-            info[info<info.T] = 0
-            info = torch.vstack([info, torch.zeros_like(info[0])])
-            mask = info[gt_classes].sum(dim=1) > 0
-            attack_classes = torch.zeros_like(gt_classes)
-            attack_classes[mask] = info[gt_classes[mask]].multinomial(1).squeeze()
+            mask = gt_classes != self.num_classes
+            obj_scores = scores.clone().detach()
+            obj_scores[range(len(obj_scores)), gt_classes] = -np.inf
+            attack_classes = torch.argmax(obj_scores[:,:-1], dim=1)
+            mask[gt_classes != self.num_classes] = torch.logical_and(
+                class_info[gt_classes[mask],attack_classes[mask]] > class_info[attack_classes[mask],gt_classes[mask]],\
+                class_info[gt_classes[mask],gt_classes[mask]] < class_info[attack_classes[mask],attack_classes[mask]]
+            )
+            mask[scores[range(len(obj_scores)),gt_classes] <= scores[range(len(obj_scores)),attack_classes]] = False
             if not mask.any():
                 loss_cls = scores.sum() * 0.0
             else:
