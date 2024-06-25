@@ -60,8 +60,9 @@ class FgFastRCNNOutputLayers(FastRCNNOutputLayers):
         if branch == "attack":
             assert class_info is not None
             class_diff = class_info - class_info.T
-            attack_mask = class_diff >= class_diff[class_diff>0].mean()
-            attack_prob = class_info * attack_mask
+            class_acc = class_info.diag().expand([self.num_classes, -1])
+            attack_mask = torch.logical_and(class_diff >= class_diff[class_diff>0].mean(), class_acc > class_acc.T)
+            attack_prob = torch.abs(class_diff * attack_mask)
             attack_mask = torch.vstack([attack_mask,torch.zeros_like(attack_mask[0])])
             mask = attack_mask[gt_classes].any(dim=1)
             attack_classes = torch.zeros_like(gt_classes)
