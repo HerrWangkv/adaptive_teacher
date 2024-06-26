@@ -701,7 +701,7 @@ class TATeacherTrainer(ATeacherTrainer):
             unlabel_data_q = self.add_label(
                 unlabel_data_q, pesudo_proposals_roih_unsup_k
             )
-            # unlabel_data_q = self.resize(unlabel_data_q)
+            unlabel_data_q = self.resize(unlabel_data_q)
             unlabel_data_k = self.add_label(
                 unlabel_data_k, pesudo_proposals_roih_unsup_k
             )
