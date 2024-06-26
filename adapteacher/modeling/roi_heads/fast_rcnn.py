@@ -59,21 +59,30 @@ class FgFastRCNNOutputLayers(FastRCNNOutputLayers):
 
         if branch == "attack":
             assert class_info is not None
+            mask = gt_classes != self.num_classes
+            obj_scores = scores.clone().detach()
+            obj_scores[range(len(obj_scores)), gt_classes] = -np.inf
+            attack_classes = torch.argmax(obj_scores[:,:-1], dim=1)
 
             class_diff = class_info - class_info.T
-            class_acc = class_info.diag().expand([class_info.shape[0],-1])
-            # only attack classes that are more likely to be major classes
-            attack_mask = torch.logical_and(class_diff >= class_diff[class_diff>0].mean(), class_acc > class_acc.mean()) 
-            vulnerable_classes = torch.where(torch.logical_and((attack_mask==False).all(dim=1),class_info.diag() <class_info.diag().mean()))[0]
-            major_classes = torch.where(class_info.diag() >class_info.diag().mean())[0]
-            pairs = torch.tensor([[i,j] for i in vulnerable_classes for j in major_classes]).to("cuda")
-            if (len(pairs)):
-                attack_mask.index_put_(list(pairs.T),torch.tensor(True, device="cuda"), accumulate=False)
-            attack_prob = torch.abs(class_diff * attack_mask)
-            attack_mask = torch.vstack([attack_mask,torch.zeros_like(attack_mask[0])])
-            mask = attack_mask[gt_classes].any(dim=1)
-            attack_classes = torch.zeros_like(gt_classes)
-            attack_classes[mask] = attack_prob[gt_classes[mask]].multinomial(1).squeeze()
+            attack_mask = class_diff >= class_diff[class_diff>0].mean()
+            mask[gt_classes != self.num_classes] = attack_mask[gt_classes[mask],attack_classes[mask]]
+            mask[scores[range(len(obj_scores)),gt_classes] <= scores[range(len(obj_scores)),attack_classes]] = False
+
+            # class_diff = class_info - class_info.T
+            # class_acc = class_info.diag().expand([class_info.shape[0],-1])
+            # # only attack classes that are more likely to be major classes
+            # attack_mask = torch.logical_and(class_diff >= class_diff[class_diff>0].mean(), class_acc > class_acc.mean()) 
+            # vulnerable_classes = torch.where(torch.logical_and((attack_mask==False).all(dim=1),class_info.diag() <class_info.diag().mean()))[0]
+            # major_classes = torch.where(class_info.diag() >class_info.diag().mean())[0]
+            # pairs = torch.tensor([[i,j] for i in vulnerable_classes for j in major_classes]).to("cuda")
+            # if (len(pairs)):
+            #     attack_mask.index_put_(list(pairs.T),torch.tensor(True, device="cuda"), accumulate=False)
+            # attack_prob = torch.abs(class_diff * attack_mask)
+            # attack_mask = torch.vstack([attack_mask,torch.zeros_like(attack_mask[0])])
+            # mask = attack_mask[gt_classes].any(dim=1)
+            # attack_classes = torch.zeros_like(gt_classes)
+            # attack_classes[mask] = attack_prob[gt_classes[mask]].multinomial(1).squeeze()
 
             # class_diff = class_info - class_info.T
             # # only attack classes that are more likely to be major classes
