@@ -636,16 +636,15 @@ class TargetedAttackedGeneralizedRCNN(GeneralizedRCNN):
         gt_classes = (cat([p.gt_classes for p in proposals], dim=0) if len(proposals) else torch.empty(0))
         del proposals
         del predictions
-
         pred_classes = torch.max(pred,dim=1)[1]
 
         # [x,0] is gt, [x,1] is predicted
         pairs = torch.vstack((gt_classes,pred_classes)).T
 
-        #remove background 
-        pairs = pairs[torch.all(pairs!=self.roi_heads.num_classes,dim=1)]
+        #remove gt background 
+        pairs = pairs[pairs[:,0]!=self.roi_heads.num_classes]
 
         # Rows represents GT, Columns represents predictions. GT=1, Pred=4 > [1,4]
-        class_tensor = torch.zeros(self.roi_heads.num_classes,self.roi_heads.num_classes)
+        class_tensor = torch.zeros(self.roi_heads.num_classes,self.roi_heads.num_classes + 1)
         class_tensor.index_put_(list(pairs.T),torch.tensor(1.0), accumulate=True)
         return class_tensor.to("cuda")

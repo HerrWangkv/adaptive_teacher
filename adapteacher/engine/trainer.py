@@ -534,7 +534,7 @@ class ImbalanceMetric(nn.Module):
     def __init__(self, num_anchors, num_classes):
         super().__init__()
         self.register_buffer('rpn', torch.zeros(num_anchors))
-        self.register_buffer('roi', torch.zeros((num_classes, num_classes)))
+        self.register_buffer('roi', torch.zeros((num_classes, num_classes + 1)))
         
 # Targeted Attacked Teacher Trainer
 
@@ -707,7 +707,7 @@ class TATeacherTrainer(ATeacherTrainer):
             )
 
             #  5. conduct targeted attack on unlabel_data_q
-            unlabel_pertubation, _, _ = self.model_teacher(unlabel_data_q, branch="attack", class_info = self.imbalance_metric.roi)
+            unlabel_pertubation, _, _ = self.model_teacher(unlabel_data_q, branch="attack", class_info = self.imbalance_metric.roi[:,:-1])
             unlabel_pertubation *= -self.cfg.SEMISUPNET.ATTACK_SEVERITY / torch.tensor(self.cfg.MODEL.PIXEL_STD).to(unlabel_pertubation.device).view(1,-1,1,1)
 
 
