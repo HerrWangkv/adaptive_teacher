@@ -67,7 +67,11 @@ class FgFastRCNNOutputLayers(FastRCNNOutputLayers):
             class_diff = class_info - class_info.T
             attack_mask = class_diff >= class_diff[class_diff>0].mean()
             mask[gt_classes != self.num_classes] = attack_mask[gt_classes[mask],attack_classes[mask]]
-            mask[scores[range(len(obj_scores)),gt_classes] <= scores[range(len(obj_scores)),attack_classes]] = False
+            # if mask.any():
+            #     torch.set_printoptions(precision=3, threshold=1000, edgeitems=3, linewidth=80, profile=None, sci_mode=False)
+            #     breakpoint()
+            mask[torch.softmax(scores,dim=1)[range(len(mask)),gt_classes] < 0.5] = False
+            # mask[scores[range(len(obj_scores)),gt_classes] <= scores[range(len(obj_scores)),attack_classes]] = False
 
             # class_diff = class_info - class_info.T
             # class_acc = class_info.diag().expand([class_info.shape[0],-1])
@@ -95,9 +99,10 @@ class FgFastRCNNOutputLayers(FastRCNNOutputLayers):
             if not mask.any():
                 loss_cls = scores.sum() * 0.0
             else:
-                binary_logits = torch.vstack([scores[mask,gt_classes[mask]], scores[mask,attack_classes[mask]]])
-                loss_cls = torch.sum(-0.5 * torch.log(torch.softmax(binary_logits,dim=0)),dim=0)
-                loss_cls = torch.mean(loss_cls)
+                # binary_logits = torch.vstack([scores[mask,gt_classes[mask]], scores[mask,attack_classes[mask]]])
+                # loss_cls = torch.sum(-0.5 * torch.log(torch.softmax(binary_logits,dim=0)),dim=0)
+                # loss_cls = torch.mean(loss_cls)
+                loss_cls = F.mse_loss(torch.softmax(scores[mask],dim=1)[range(mask.sum()),gt_classes[mask]], 0.5 * torch.ones_like(gt_classes[mask]), reduction="mean")
         else:
             assert class_info is None
             loss_cls = cross_entropy(scores, gt_classes, reduction="mean")
