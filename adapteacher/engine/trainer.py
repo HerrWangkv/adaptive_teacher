@@ -676,17 +676,23 @@ class TATeacherTrainer(ATeacherTrainer):
             #  0. remove unlabeled data labels
             unlabel_data_q = self.remove_label(unlabel_data_q)
             unlabel_data_k = self.remove_label(unlabel_data_k)
+            
+            #  5. conduct targeted attack on unlabel_data_q
+            label_pertubation, _, _ = self.model_teacher(label_data_q, branch="attack")
+            label_pertubation *= -self.cfg.SEMISUPNET.ATTACK_SEVERITY / torch.tensor(self.cfg.MODEL.PIXEL_STD).to(label_pertubation.device).view(1,-1,1,1)
+        
+            pertubation = torch.cat([torch.zeros_like(label_pertubation), label_pertubation], dim=0)
 
             #  1. input both strongly and weakly augmented labeled data into student model
             all_label_data = label_data_k + label_data_q
             record_all_label_data, local_objectness, local_matrix = self.model(
-                all_label_data, branch="supervised",  ret_mean_objectness=True, ret_confusion_matrix=True#, rpn_weights=self.imbalance_metric.rpn.to("cuda")
+                all_label_data, branch="supervised",  pertubation=pertubation
             )
             record_dict.update(record_all_label_data)
             #  2. calculate the EMA of confusion matrix
             # Sum local matrix across all GPUs
-            self.update_mean_objectness(local_objectness)
-            self.update_confusion_matrix(local_matrix)
+            # self.update_mean_objectness(local_objectness)
+            # self.update_confusion_matrix(local_matrix)
             #  3. generate the pseudo-label using teacher model
             with torch.no_grad():
                 proposals_roih_unsup_k, _, _ = self.model_teacher(unlabel_data_k, branch="unsup_data_weak")
@@ -706,14 +712,9 @@ class TATeacherTrainer(ATeacherTrainer):
                 unlabel_data_k, pesudo_proposals_roih_unsup_k
             )
 
-            #  5. conduct targeted attack on unlabel_data_q
-            unlabel_pertubation, _, _ = self.model_teacher(unlabel_data_q, branch="attack", class_info = self.imbalance_metric.roi[:,:-1])
-            unlabel_pertubation *= -self.cfg.SEMISUPNET.ATTACK_SEVERITY / torch.tensor(self.cfg.MODEL.PIXEL_STD).to(unlabel_pertubation.device).view(1,-1,1,1)
-
-
             #  6. input strongly augmented unlabeled data into model
             record_all_unlabel_data, _, _ = self.model(
-                unlabel_data_q, branch="supervised_target", pertubation=unlabel_pertubation
+                unlabel_data_q, branch="supervised_target"
             )
             new_record_all_unlabel_data = {}
             for key in record_all_unlabel_data.keys():
