@@ -850,54 +850,54 @@ class TATeacherTrainer(ATeacherTrainer):
                 raise NotImplemented
         return data
 
-    def threshold_bbox(self, proposal_bbox_inst, thres=0.7, proposal_type="roih"):
-        if proposal_type == "rpn":
-            valid_map = proposal_bbox_inst.objectness_logits > thres
+    # def threshold_bbox(self, proposal_bbox_inst, thres=0.7, proposal_type="roih"):
+    #     if proposal_type == "rpn":
+    #         valid_map = proposal_bbox_inst.objectness_logits > thres
 
-            # create instances containing boxes and gt_classes
-            image_shape = proposal_bbox_inst.image_size
-            new_proposal_inst = Instances(image_shape)
+    #         # create instances containing boxes and gt_classes
+    #         image_shape = proposal_bbox_inst.image_size
+    #         new_proposal_inst = Instances(image_shape)
 
-            # create box
-            new_bbox_loc = proposal_bbox_inst.proposal_boxes.tensor[valid_map, :]
-            new_boxes = Boxes(new_bbox_loc)
+    #         # create box
+    #         new_bbox_loc = proposal_bbox_inst.proposal_boxes.tensor[valid_map, :]
+    #         new_boxes = Boxes(new_bbox_loc)
 
-            # add boxes to instances
-            new_proposal_inst.gt_boxes = new_boxes
-            new_proposal_inst.objectness_logits = proposal_bbox_inst.objectness_logits[
-                valid_map
-            ]
-        elif proposal_type == "roih":
-            valid_map = proposal_bbox_inst.scores > thres
+    #         # add boxes to instances
+    #         new_proposal_inst.gt_boxes = new_boxes
+    #         new_proposal_inst.objectness_logits = proposal_bbox_inst.objectness_logits[
+    #             valid_map
+    #         ]
+    #     elif proposal_type == "roih":
+    #         valid_map = proposal_bbox_inst.scores > thres
 
-            if valid_map.any():
-                ious = pairwise_iou(proposal_bbox_inst.pred_boxes, proposal_bbox_inst.pred_boxes)
-                for i in range(len(valid_map)):
-                    if valid_map[i]:
-                        for j in range(i + 1, len(valid_map)):
-                            if valid_map[j] and ious[i, j] > 0.8:
-                                if (self.imbalance_metric.roi[proposal_bbox_inst.pred_classes[i],proposal_bbox_inst.pred_classes[i]]
-                                    > self.imbalance_metric.roi[proposal_bbox_inst.pred_classes[j],proposal_bbox_inst.pred_classes[j]]
-                                ):
-                                    valid_map[i] = False
-                                    break
-                                else:
-                                    valid_map[j] = False
-            tmp = (proposal_bbox_inst.scores > thres).sum() - valid_map.sum()
-            if tmp:
-                print(f"removed {tmp} labels")
+    #         if valid_map.any():
+    #             ious = pairwise_iou(proposal_bbox_inst.pred_boxes, proposal_bbox_inst.pred_boxes)
+    #             for i in range(len(valid_map)):
+    #                 if valid_map[i]:
+    #                     for j in range(i + 1, len(valid_map)):
+    #                         if valid_map[j] and ious[i, j] > 0.8:
+    #                             if (self.imbalance_metric.roi[proposal_bbox_inst.pred_classes[i],proposal_bbox_inst.pred_classes[i]]
+    #                                 > self.imbalance_metric.roi[proposal_bbox_inst.pred_classes[j],proposal_bbox_inst.pred_classes[j]]
+    #                             ):
+    #                                 valid_map[i] = False
+    #                                 break
+    #                             else:
+    #                                 valid_map[j] = False
+    #         tmp = (proposal_bbox_inst.scores > thres).sum() - valid_map.sum()
+    #         if tmp:
+    #             print(f"removed {tmp} labels")
 
-            # create instances containing boxes and gt_classes
-            image_shape = proposal_bbox_inst.image_size
-            new_proposal_inst = Instances(image_shape)
+    #         # create instances containing boxes and gt_classes
+    #         image_shape = proposal_bbox_inst.image_size
+    #         new_proposal_inst = Instances(image_shape)
 
-            # create box
-            new_bbox_loc = proposal_bbox_inst.pred_boxes.tensor[valid_map, :]
-            new_boxes = Boxes(new_bbox_loc)
+    #         # create box
+    #         new_bbox_loc = proposal_bbox_inst.pred_boxes.tensor[valid_map, :]
+    #         new_boxes = Boxes(new_bbox_loc)
 
-            # add boxes to instances
-            new_proposal_inst.gt_boxes = new_boxes
-            new_proposal_inst.gt_classes = proposal_bbox_inst.pred_classes[valid_map]
-            new_proposal_inst.scores = proposal_bbox_inst.scores[valid_map]
+    #         # add boxes to instances
+    #         new_proposal_inst.gt_boxes = new_boxes
+    #         new_proposal_inst.gt_classes = proposal_bbox_inst.pred_classes[valid_map]
+    #         new_proposal_inst.scores = proposal_bbox_inst.scores[valid_map]
 
-        return new_proposal_inst
+    #     return new_proposal_inst
