@@ -592,37 +592,26 @@ class TargetedAttackedGeneralizedRCNN(GeneralizedRCNN):
             return proposals_roih, None, None
 
         elif branch == "attack":
-            # # RPN
-            # proposals_rpn, (proposal_losses, _) = self.proposal_generator(
-            #     images, features, gt_instances, branch=branch, anchor_info=anchor_info
-            # )
-
-            # # ROI
-            # _, detector_losses = self.roi_heads(
-            #     images,
-            #     features,
-            #     proposals_rpn,
-            #     gt_instances,
-            #     branch=branch,
-            #     class_info=class_info,
-            # )
-            # losses = detector_losses["loss_cls"]
-            # grad = torch.autograd.grad(
-            #     losses, images.tensor, retain_graph=False, create_graph=False
-            # )
-
-            D_img_out_t = self.D_img(features[self.dis_type])
-            loss_D_img_t = F.binary_cross_entropy_with_logits(
-                D_img_out_t,
-                torch.FloatTensor(D_img_out_t.data.size())
-                .fill_(target_label)
-                .to(self.device),
+            # RPN
+            proposals_rpn, (proposal_losses, _) = self.proposal_generator(
+                images, features, gt_instances, branch=branch, anchor_info=anchor_info
             )
+
+            # ROI
+            _, detector_losses = self.roi_heads(
+                images,
+                features,
+                proposals_rpn,
+                gt_instances,
+                branch=branch,
+                class_info=class_info,
+            )
+            losses = detector_losses["loss_cls"]
             grad = torch.autograd.grad(
-                loss_D_img_t, images.tensor, retain_graph=False, create_graph=False
+                losses, images.tensor, retain_graph=False, create_graph=False
             )
 
-            return grad[0].sign(), None, None
+            return grad[0], None, None
 
         else:
             raise NotImplementedError()
