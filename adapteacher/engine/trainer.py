@@ -718,7 +718,7 @@ class TATeacherTrainer(ATeacherTrainer):
 
             #  6. input strongly augmented unlabeled data into model
             record_all_unlabel_data, _, _ = self.model(
-                unlabel_data_q, branch="supervised_target", pertubation=unlabel_pertubation
+                unlabel_data_q, branch="supervised_target", pertubation=pertubation
             )
             new_record_all_unlabel_data = {}
             for key in record_all_unlabel_data.keys():
