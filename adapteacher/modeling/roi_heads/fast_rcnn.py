@@ -61,11 +61,12 @@ class FgFastRCNNOutputLayers(FastRCNNOutputLayers):
             assert class_info is not None
             obj_scores = scores.clone().detach()
             obj_scores[range(len(obj_scores)), gt_classes] = -np.inf
-            attack_classes = torch.argmax(obj_scores, dim=1)
+            attack_classes = torch.argmax(obj_scores[:,:-1], dim=1)
 
-            attack_mask = class_info.diag() < class_info.diag().mean()
+            class_diff = class_info - class_info.T
+            attack_mask = class_diff >= class_diff[class_diff>0].mean()
             mask = torch.zeros_like(gt_classes, dtype=torch.bool)
-            mask[gt_classes != self.num_classes] = attack_mask[gt_classes[gt_classes != self.num_classes]]
+            mask[gt_classes != self.num_classes] = attack_mask[gt_classes[gt_classes != self.num_classes], attack_classes[gt_classes != self.num_classes]]
             # if mask.any():
             #     torch.set_printoptions(precision=3, threshold=1000, edgeitems=3, linewidth=80, profile=None, sci_mode=False)
             #     print(gt_classes[mask],attack_classes[mask])
@@ -102,9 +103,12 @@ class FgFastRCNNOutputLayers(FastRCNNOutputLayers):
             if not mask.any():
                 loss_cls = scores.sum() * 0.0
             else:
-                gt_probs = torch.softmax(scores[mask], dim=1)[range(mask.sum()), gt_classes[mask]]
-                other_probs = 1 - gt_probs
-                loss_cls = -0.5 * (torch.log(gt_probs) + torch.log(other_probs)).mean()
+                binary_logits = torch.vstack([scores[mask,gt_classes[mask]], scores[mask,attack_classes[mask]]])
+                loss_cls = torch.sum(-0.5 * torch.log(torch.softmax(binary_logits,dim=0)),dim=0)
+                loss_cls = torch.mean(loss_cls)
+                # gt_probs = torch.softmax(scores[mask], dim=1)[range(mask.sum()), gt_classes[mask]]
+                # other_probs = 1 - gt_probs
+                # loss_cls = -0.5 * (torch.log(gt_probs) + torch.log(other_probs)).mean()
                 # loss_cls = cross_entropy(scores[mask], attack_classes[mask], reduction="mean")
         else:
             assert class_info is None
