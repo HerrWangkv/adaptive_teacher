@@ -58,6 +58,12 @@ class FgFastRCNNOutputLayers(FastRCNNOutputLayers):
             )
 
         if branch == "attack":
+            mask = gt_classes != self.num_classes
+            if not mask.any():
+                loss_cls = scores.sum() * 0.0
+            else:
+                loss_cls = cross_entropy(scores[mask], self.num_classes*torch.ones_like(gt_classes[mask]), reduction="mean")
+            """
             assert class_info is not None
             obj_scores = scores.clone().detach()
             obj_scores[range(len(obj_scores)), gt_classes] = -np.inf
@@ -110,6 +116,7 @@ class FgFastRCNNOutputLayers(FastRCNNOutputLayers):
                 # other_probs = 1 - gt_probs
                 # loss_cls = -0.5 * (torch.log(gt_probs) + torch.log(other_probs)).mean()
                 # loss_cls = cross_entropy(scores[mask], attack_classes[mask], reduction="mean")
+            """
         else:
             assert class_info is None
             loss_cls = cross_entropy(scores, gt_classes, reduction="mean")
