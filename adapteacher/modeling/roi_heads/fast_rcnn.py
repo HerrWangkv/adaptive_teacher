@@ -63,7 +63,7 @@ class FgFastRCNNOutputLayers(FastRCNNOutputLayers):
             obj_scores = scores.clone().detach()
             obj_scores[range(len(obj_scores)), gt_classes] = -np.inf
             attack_classes = torch.argmax(obj_scores[:,:-1], dim=1)
-            mask[gt_classes != self.num_classes] = class_info[gt_classes[mask],attack_classes[mask]] > class_info[attack_classes[mask],gt_classes[mask]]
+            mask[gt_classes != self.num_classes] = torch.logical_and(class_info[gt_classes[mask],attack_classes[mask]] > class_info[attack_classes[mask],gt_classes[mask]], class_info.diag()[attack_classes[mask]] > class_info.diag().mean())
             mask[scores[range(len(obj_scores)),gt_classes] <= scores[range(len(obj_scores)),attack_classes]] = False
             if not mask.any():
                 loss_cls = scores.sum() * 0.0
