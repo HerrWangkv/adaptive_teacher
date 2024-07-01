@@ -149,7 +149,8 @@ class FgPseudoRPN(RPN):
 
         if self.training and branch in ["supervised", "supervised_target", "attack"]:
             assert gt_instances is not None, "RPN requires gt_instances in training!"
-            gt_labels, gt_boxes, gt_classes = self.label_and_sample_anchors(
+            # gt_labels, gt_boxes, gt_classes = self.label_and_sample_anchors(
+            gt_labels, gt_boxes = self.label_and_sample_anchors(
                 anchors, gt_instances
             )
             losses = self.losses(
@@ -158,7 +159,7 @@ class FgPseudoRPN(RPN):
                 gt_labels,
                 pred_anchor_deltas,
                 gt_boxes,
-                gt_classes,
+                #gt_classes,
                 branch,
                 class_info
             )
@@ -176,58 +177,58 @@ class FgPseudoRPN(RPN):
 
         return proposals, (losses, mean_objectness)
     
-    @torch.jit.unused
-    @torch.no_grad()
-    def label_and_sample_anchors(
-        self, anchors: List[Boxes], gt_instances: List[Instances]
-    ) -> Tuple[List[torch.Tensor], List[torch.Tensor]]:
-        """
-        Add class label for each anchor
-        """
-        anchors = Boxes.cat(anchors)
+    # @torch.jit.unused
+    # @torch.no_grad()
+    # def label_and_sample_anchors(
+    #     self, anchors: List[Boxes], gt_instances: List[Instances]
+    # ) -> Tuple[List[torch.Tensor], List[torch.Tensor]]:
+    #     """
+    #     Add class label for each anchor
+    #     """
+    #     anchors = Boxes.cat(anchors)
 
-        gt_boxes = [x.gt_boxes for x in gt_instances]
-        gt_classes = [x.gt_classes for x in gt_instances]
-        image_sizes = [x.image_size for x in gt_instances]
-        del gt_instances
+    #     gt_boxes = [x.gt_boxes for x in gt_instances]
+    #     gt_classes = [x.gt_classes for x in gt_instances]
+    #     image_sizes = [x.image_size for x in gt_instances]
+    #     del gt_instances
 
-        gt_labels = []
-        matched_gt_boxes = []
-        matched_gt_classes = []
-        for image_size_i, gt_boxes_i, gt_classes_i in zip(image_sizes, gt_boxes, gt_classes):
-            """
-            image_size_i: (h, w) for the i-th image
-            gt_boxes_i: ground-truth boxes for i-th image
-            """
+    #     gt_labels = []
+    #     matched_gt_boxes = []
+    #     matched_gt_classes = []
+    #     for image_size_i, gt_boxes_i, gt_classes_i in zip(image_sizes, gt_boxes, gt_classes):
+    #         """
+    #         image_size_i: (h, w) for the i-th image
+    #         gt_boxes_i: ground-truth boxes for i-th image
+    #         """
 
-            match_quality_matrix = retry_if_cuda_oom(pairwise_iou)(gt_boxes_i, anchors)
-            matched_idxs, gt_labels_i = retry_if_cuda_oom(self.anchor_matcher)(match_quality_matrix)
-            # Matching is memory-expensive and may result in CPU tensors. But the result is small
-            gt_labels_i = gt_labels_i.to(device=gt_boxes_i.device)
-            del match_quality_matrix
+    #         match_quality_matrix = retry_if_cuda_oom(pairwise_iou)(gt_boxes_i, anchors)
+    #         matched_idxs, gt_labels_i = retry_if_cuda_oom(self.anchor_matcher)(match_quality_matrix)
+    #         # Matching is memory-expensive and may result in CPU tensors. But the result is small
+    #         gt_labels_i = gt_labels_i.to(device=gt_boxes_i.device)
+    #         del match_quality_matrix
 
-            if self.anchor_boundary_thresh >= 0:
-                # Discard anchors that go out of the boundaries of the image
-                # NOTE: This is legacy functionality that is turned off by default in Detectron2
-                anchors_inside_image = anchors.inside_box(image_size_i, self.anchor_boundary_thresh)
-                gt_labels_i[~anchors_inside_image] = -1
+    #         if self.anchor_boundary_thresh >= 0:
+    #             # Discard anchors that go out of the boundaries of the image
+    #             # NOTE: This is legacy functionality that is turned off by default in Detectron2
+    #             anchors_inside_image = anchors.inside_box(image_size_i, self.anchor_boundary_thresh)
+    #             gt_labels_i[~anchors_inside_image] = -1
 
-            # A vector of labels (-1, 0, 1) for each anchor
-            gt_labels_i = self._subsample_labels(gt_labels_i)
+    #         # A vector of labels (-1, 0, 1) for each anchor
+    #         gt_labels_i = self._subsample_labels(gt_labels_i)
 
-            if len(gt_boxes_i) == 0:
-                # These values won't be used anyway since the anchor is labeled as background
-                matched_gt_boxes_i = torch.zeros_like(anchors.tensor)
-                matched_gt_classes_i = torch.zeros_like(matched_idxs)
-            else:
-                # TODO wasted indexing computation for ignored boxes
-                matched_gt_boxes_i = gt_boxes_i[matched_idxs].tensor
-                matched_gt_classes_i = gt_classes_i[matched_idxs]
+    #         if len(gt_boxes_i) == 0:
+    #             # These values won't be used anyway since the anchor is labeled as background
+    #             matched_gt_boxes_i = torch.zeros_like(anchors.tensor)
+    #             matched_gt_classes_i = torch.zeros_like(matched_idxs)
+    #         else:
+    #             # TODO wasted indexing computation for ignored boxes
+    #             matched_gt_boxes_i = gt_boxes_i[matched_idxs].tensor
+    #             matched_gt_classes_i = gt_classes_i[matched_idxs]
 
-            gt_labels.append(gt_labels_i)  # N,AHW
-            matched_gt_boxes.append(matched_gt_boxes_i)
-            matched_gt_classes.append(matched_gt_classes_i)
-        return gt_labels, matched_gt_boxes, matched_gt_classes
+    #         gt_labels.append(gt_labels_i)  # N,AHW
+    #         matched_gt_boxes.append(matched_gt_boxes_i)
+    #         matched_gt_classes.append(matched_gt_classes_i)
+    #     return gt_labels, matched_gt_boxes, matched_gt_classes
  
     @torch.jit.unused
     def losses(
@@ -237,7 +238,7 @@ class FgPseudoRPN(RPN):
         gt_labels: List[torch.Tensor],
         pred_anchor_deltas: List[torch.Tensor],
         gt_boxes: List[torch.Tensor],
-        gt_classes: List[torch.Tensor],
+        #gt_classes: List[torch.Tensor],
         branch: str,
         class_info=None
     ) -> Dict[str, torch.Tensor]:
@@ -265,8 +266,8 @@ class FgPseudoRPN(RPN):
             smooth_l1_beta=self.smooth_l1_beta,
         )
 
-        if branch == "attack":
-            assert class_info is not None
+        if branch == "attack" and class_info is not None:
+            return NotImplemented
             gt_classes = torch.vstack(gt_classes)
             mask = torch.logical_and(pos_mask, class_info.diag()[gt_classes] < class_info.diag().mean())
             # print(cat(pred_objectness_logits, dim=1)[mask])

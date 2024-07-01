@@ -708,13 +708,14 @@ class TATeacherTrainer(ATeacherTrainer):
             
             #  5. conduct targeted attack on unlabel_data_q
             pertubation = None
-            for i in range(5):
-                # print(i)
-                unlabel_pertubation, _, _ = self.model(unlabel_data_q, branch="attack", class_info=self.imbalance_metric.roi[:,:-1], pertubation=pertubation)
-                if not unlabel_pertubation.any():
-                    break
-                unlabel_pertubation *= -self.cfg.SEMISUPNET.ATTACK_SEVERITY# / torch.tensor(self.cfg.MODEL.PIXEL_STD).to(unlabel_pertubation.device).view(1,-1,1,1)
-                pertubation = unlabel_pertubation if pertubation is None else pertubation + unlabel_pertubation
+            if random.random() < 0.5:
+                for i in range(5):
+                    # print(i)
+                    unlabel_pertubation, _, _ = self.model(unlabel_data_q, branch="attack", class_info=self.imbalance_metric.roi, pertubation=pertubation)
+                    if not unlabel_pertubation.any():
+                        break
+                    unlabel_pertubation *= -self.cfg.SEMISUPNET.ATTACK_SEVERITY# / torch.tensor(self.cfg.MODEL.PIXEL_STD).to(unlabel_pertubation.device).view(1,-1,1,1)
+                    pertubation = unlabel_pertubation if pertubation is None else pertubation + unlabel_pertubation
 
             #  6. input strongly augmented unlabeled data into model
             record_all_unlabel_data, _, _ = self.model(
