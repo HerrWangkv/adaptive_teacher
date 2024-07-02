@@ -707,14 +707,16 @@ class TATeacherTrainer(ATeacherTrainer):
             pertubation = None
             for i in range(1):
                 # print(i)
-                unlabel_pertubation, _, _ = self.model_teacher(unlabel_data_q, branch="attack", class_info = self.imbalance_metric.roi, pertubation=pertubation)
-                unlabel_pertubation *= -self.cfg.SEMISUPNET.ATTACK_SEVERITY / torch.tensor(self.cfg.MODEL.PIXEL_STD).to(unlabel_pertubation.device).view(1,-1,1,1)
+                unlabel_pertubation, _, _ = self.model_teacher(unlabel_data_k, branch="attack", class_info = self.imbalance_metric.roi, pertubation=pertubation)
+                unlabel_pertubation *= -self.cfg.SEMISUPNET.ATTACK_SEVERITY# / torch.tensor(self.cfg.MODEL.PIXEL_STD).to(unlabel_pertubation.device).view(1,-1,1,1)
                 pertubation = unlabel_pertubation if pertubation is None else pertubation + unlabel_pertubation
 
 
             #  6. input strongly augmented unlabeled data into model
+            all_unlabel_data = unlabel_data_k + unlabel_data_q
+            pertubation = torch.cat([pertubation, torch.zeros_like(pertubation)], dim=0)
             record_all_unlabel_data, _, _ = self.model(
-                unlabel_data_q, branch="supervised_target", pertubation=pertubation
+                all_unlabel_data, branch="supervised_target", pertubation=pertubation
             )
             new_record_all_unlabel_data = {}
             for key in record_all_unlabel_data.keys():

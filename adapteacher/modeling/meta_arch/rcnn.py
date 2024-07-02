@@ -610,7 +610,7 @@ class TargetedAttackedGeneralizedRCNN(GeneralizedRCNN):
             grad = torch.autograd.grad(
                 losses, images.tensor, retain_graph=False, create_graph=False
             )
-            return grad[0].sign(), None, None
+            return grad[0], None, None
 
         else:
             raise NotImplementedError()

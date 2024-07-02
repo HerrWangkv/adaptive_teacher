@@ -59,18 +59,26 @@ class FgFastRCNNOutputLayers(FastRCNNOutputLayers):
 
         if branch == "attack":
             assert class_info is not None
-            mask = gt_classes != self.num_classes
-            mask[gt_classes != self.num_classes] = class_info.diag()[gt_classes[mask]] > class_info.diag().mean()
+            class_diff = class_info - class_info.T
+            attack_mask = class_diff >= class_diff[class_diff>0].mean()
+            attack_mask[class_info.diag()>class_info.diag().mean()]=False
+            attack_prob = torch.abs(class_diff * attack_mask)
+            attack_mask = torch.vstack([attack_mask,torch.zeros_like(attack_mask[0])])
+            mask = attack_mask[gt_classes].any(dim=1)
+            attack_classes = torch.zeros_like(gt_classes)
+            attack_classes[mask] = attack_prob[gt_classes[mask]].multinomial(1).squeeze()
             if not mask.any():
                 loss_cls = scores.sum() * 0.0
             else:
-                # binary_logits = torch.vstack([scores[mask,gt_classes[mask]], scores[mask,attack_classes[mask]]])
-                # loss_cls = torch.sum(-0.5 * torch.log(torch.softmax(binary_logits,dim=0)),dim=0)
-                # loss_cls = torch.mean(loss_cls)
-                # torch.set_printoptions(precision=3, threshold=1000, edgeitems=3, linewidth=80, profile=None, sci_mode=False)
-                # print(torch.softmax(scores[mask],dim=1)[range(mask.sum()),gt_classes[mask]].mean())
-                # breakpoint()
-                loss_cls = cross_entropy(scores[mask], gt_classes[mask], reduction="mean")
+                torch.set_printoptions(precision=3, threshold=1000, edgeitems=3, linewidth=80, profile=None, sci_mode=False)
+                print(gt_classes[mask], attack_classes[mask])
+                print(torch.softmax(scores[mask],dim=1)[range(mask.sum()),gt_classes[mask]].mean(), torch.softmax(scores[mask],dim=1)[range(mask.sum()),attack_classes[mask]].mean())
+                breakpoint()
+                # gt_probs = torch.softmax(scores[mask], dim=1)[range(mask.sum()), gt_classes[mask]]
+                # attack_probs = torch.softmax(scores[mask], dim=1)[range(mask.sum()), attack_classes[mask]]
+                # loss_cls = -0.5 * (torch.log(gt_probs) + torch.log(attack_probs)).mean()
+
+                loss_cls = cross_entropy(scores[mask], attack_classes[mask], reduction="mean")
         else:
             assert class_info is None
             loss_cls = cross_entropy(scores, gt_classes, reduction="mean")
