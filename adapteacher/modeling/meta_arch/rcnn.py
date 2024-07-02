@@ -455,8 +455,7 @@ class TargetedAttackedGeneralizedRCNN(GeneralizedRCNN):
         pertubation=None,
         ret_confusion_matrix=False,
         ret_mean_objectness=False,
-        anchor_info=None,
-        class_info=None,
+        attack_mask=None,
     ):
         if not self.training:
             return self.inference(batched_inputs)
@@ -594,7 +593,7 @@ class TargetedAttackedGeneralizedRCNN(GeneralizedRCNN):
         elif branch == "attack":
             # RPN
             proposals_rpn, (proposal_losses, _) = self.proposal_generator(
-                images, features, gt_instances, branch=branch, anchor_info=anchor_info
+                images, features, gt_instances, branch=branch
             )
 
             # ROI
@@ -604,7 +603,7 @@ class TargetedAttackedGeneralizedRCNN(GeneralizedRCNN):
                 proposals_rpn,
                 gt_instances,
                 branch=branch,
-                class_info=class_info,
+                attack_mask=attack_mask,
             )
             losses = detector_losses["loss_cls"]
             grad = torch.autograd.grad(
@@ -636,16 +635,15 @@ class TargetedAttackedGeneralizedRCNN(GeneralizedRCNN):
         gt_classes = (cat([p.gt_classes for p in proposals], dim=0) if len(proposals) else torch.empty(0))
         del proposals
         del predictions
-
         pred_classes = torch.max(pred,dim=1)[1]
 
         # [x,0] is gt, [x,1] is predicted
         pairs = torch.vstack((gt_classes,pred_classes)).T
 
-        #remove background 
-        pairs = pairs[torch.all(pairs!=self.roi_heads.num_classes,dim=1)]
+        #remove gt background 
+        pairs = pairs[pairs[:,0]!=self.roi_heads.num_classes]
 
         # Rows represents GT, Columns represents predictions. GT=1, Pred=4 > [1,4]
-        class_tensor = torch.zeros(self.roi_heads.num_classes,self.roi_heads.num_classes)
+        class_tensor = torch.zeros(self.roi_heads.num_classes,self.roi_heads.num_classes + 1)
         class_tensor.index_put_(list(pairs.T),torch.tensor(1.0), accumulate=True)
         return class_tensor.to("cuda")

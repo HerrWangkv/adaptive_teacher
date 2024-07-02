@@ -21,7 +21,7 @@ from detectron2.evaluation import verify_results, DatasetEvaluators
 
 from detectron2.data.dataset_mapper import DatasetMapper
 from detectron2.engine import hooks
-from detectron2.structures.boxes import Boxes
+from detectron2.structures.boxes import Boxes, pairwise_iou
 from detectron2.structures.instances import Instances
 from detectron2.utils.env import TORCH_VERSION
 from detectron2.data import MetadataCatalog
@@ -325,17 +325,17 @@ class ATeacherTrainer(DefaultTrainer):
             #  2. Pseudo-labeling
             cur_threshold = self.cfg.SEMISUPNET.BBOX_THRESHOLD
 
-            pesudo_proposals_roih_unsup_k, _ = self.process_pseudo_label(
+            pseudo_proposals_roih_unsup_k, _ = self.process_pseudo_label(
                 proposals_roih_unsup_k, cur_threshold, "roih", "thresholding"
             )
 
             #  3. add pseudo-label to unlabeled data
 
             unlabel_data_q = self.add_label(
-                unlabel_data_q, pesudo_proposals_roih_unsup_k
+                unlabel_data_q, pseudo_proposals_roih_unsup_k
             )
             unlabel_data_k = self.add_label(
-                unlabel_data_k, pesudo_proposals_roih_unsup_k
+                unlabel_data_k, pseudo_proposals_roih_unsup_k
             )
 
             all_label_data = label_data_q + label_data_k
@@ -532,7 +532,7 @@ class ImbalanceMetric(nn.Module):
     def __init__(self, num_anchors, num_classes):
         super().__init__()
         self.register_buffer('rpn', torch.zeros(num_anchors))
-        self.register_buffer('roi', torch.zeros((num_classes, num_classes)))
+        self.register_buffer('roi', torch.zeros((num_classes, num_classes + 1)))
         
 # Targeted Attacked Teacher Trainer
 
@@ -692,31 +692,38 @@ class TATeacherTrainer(ATeacherTrainer):
             #  4. Pseudo-labeling
             cur_threshold = self.cfg.SEMISUPNET.BBOX_THRESHOLD
 
-            pesudo_proposals_roih_unsup_k, _ = self.process_pseudo_label(
+            pseudo_proposals_roih_unsup_k, _ = self.process_pseudo_label(
                 proposals_roih_unsup_k, cur_threshold, "roih", "thresholding"
             )
 
-            unlabel_data_q = self.add_label(
-                unlabel_data_q, pesudo_proposals_roih_unsup_k
-            )
             unlabel_data_k = self.add_label(
-                unlabel_data_k, pesudo_proposals_roih_unsup_k
+                unlabel_data_k, pseudo_proposals_roih_unsup_k
             )
 
             #  5. conduct targeted attack on unlabel_data_q
-            pertubation = None
-            for i in range(1):
-                # print(i)
-                unlabel_pertubation, _, _ = self.model_teacher(unlabel_data_k, branch="attack", class_info = self.imbalance_metric.roi, pertubation=pertubation)
-                unlabel_pertubation *= -self.cfg.SEMISUPNET.ATTACK_SEVERITY# / torch.tensor(self.cfg.MODEL.PIXEL_STD).to(unlabel_pertubation.device).view(1,-1,1,1)
-                pertubation = unlabel_pertubation if pertubation is None else pertubation + unlabel_pertubation
+            unlabel_pertubation, _, _ = self.model_teacher(unlabel_data_k, branch="attack", attack_mask = self.attack_mask)
+            unlabel_pertubation *= self.cfg.SEMISUPNET.ATTACK_SEVERITY #/ torch.tensor(self.cfg.MODEL.PIXEL_STD).to(unlabel_pertubation.device).view(1,-1,1,1)
+            # torch.save(unlabel_data_k, 'unlabel_data_k.pt')
+            # _, _, _ = self.model_teacher(unlabel_data_k, branch="attack", attack_mask = self.attack_mask, pertubation=unlabel_pertubation)
+
+            if unlabel_pertubation.any():
+                with torch.no_grad():
+                    proposals_roih_attacked_k, _, _ = self.model_teacher(unlabel_data_k, branch="unsup_data_weak", pertubation=unlabel_pertubation)
+
+                merged_pseudo_proposals = self.merge_pseudo_labels(pseudo_proposals_roih_unsup_k, proposals_roih_attacked_k)
+            else:
+                merged_pseudo_proposals = pseudo_proposals_roih_unsup_k
+
+            unlabel_data_q = self.add_label(
+                unlabel_data_q, merged_pseudo_proposals
+            )
+            # if unlabel_pertubation.any():
+            #     breakpoint()
 
 
             #  6. input strongly augmented unlabeled data into model
-            all_unlabel_data = unlabel_data_k + unlabel_data_q
-            pertubation = torch.cat([pertubation, torch.zeros_like(pertubation)], dim=0)
             record_all_unlabel_data, _, _ = self.model(
-                all_unlabel_data, branch="supervised_target", pertubation=pertubation
+                unlabel_data_q, branch="supervised_target",
             )
             new_record_all_unlabel_data = {}
             for key in record_all_unlabel_data.keys():
@@ -807,3 +814,32 @@ class TATeacherTrainer(ATeacherTrainer):
                 self.cfg.SEMISUPNET.EMA_IMBALANCE_METRIC * self.imbalance_metric.roi[mask]
                 + (1 - self.cfg.SEMISUPNET.EMA_IMBALANCE_METRIC) * local_matrix[mask]
             )
+        self.attack_mask = self.imbalance_metric.roi.diag() <= self.imbalance_metric.roi.diag().mean()
+        
+    def merge_pseudo_labels(self, pseudo_labels, attacked_predictions):
+        merged_pseudo_labels = []
+        for i in range(len(pseudo_labels)):
+            pseudo_boxes = pseudo_labels[i].gt_boxes
+            pseudo_classes = pseudo_labels[i].gt_classes
+            pseudo_probs = pseudo_labels[i].probs
+            final_probs = torch.zeros_like(pseudo_labels[i].probs)
+            final_probs[range(len(pseudo_classes)), pseudo_classes] = 1
+            pred_boxes = attacked_predictions[i].pred_boxes
+            pred_probs = attacked_predictions[i].probs
+            match_quality_matrix = pairwise_iou(pseudo_boxes, pred_boxes)
+            minor_mask = self.attack_mask[pseudo_classes]
+            # minor_pseudo_classes = pseudo_classes[minor_mask]
+            minor_ious, minor_indices = match_quality_matrix[minor_mask].max(dim=1)
+            final_probs[minor_mask] = 0.5 * (pseudo_probs[minor_mask] + pred_probs[minor_indices])
+            # print(minor_ious)
+            # print(final_probs[minor_mask])
+            valid_mask = torch.logical_or(~minor_mask, match_quality_matrix.max(dim=1).values > 0.5)
+            if (valid_mask == False).any():
+                print(f"Removing {(valid_mask==False).sum()} pseudo labels")
+            image_shape = pseudo_labels[i].image_size
+            new_proposal_inst = Instances(image_shape)
+            new_proposal_inst.gt_boxes = pseudo_boxes[valid_mask]
+            new_proposal_inst.gt_classes = pseudo_classes[valid_mask]
+            new_proposal_inst.gt_probs = final_probs[valid_mask]
+            merged_pseudo_labels.append(new_proposal_inst)
+        return merged_pseudo_labels

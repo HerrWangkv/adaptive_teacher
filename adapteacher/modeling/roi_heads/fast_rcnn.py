@@ -12,7 +12,7 @@ from detectron2.modeling.roi_heads.fast_rcnn import (
 )
 
 class FgFastRCNNOutputLayers(FastRCNNOutputLayers):
-    def losses(self, predictions, proposals, branch, class_info=None):
+    def losses(self, predictions, proposals, branch, attack_mask=None):
         """
         Only consider fg loss during attack
         """
@@ -25,11 +25,11 @@ class FgFastRCNNOutputLayers(FastRCNNOutputLayers):
             else torch.empty(0)
         )
 
-        attack_classes = (
-            cat([p.attack_classes for p in proposals], dim=0)
+        gt_probs = (
+            cat([p.gt_probs for p in proposals], dim=0)
             if len(proposals)
             else torch.empty(0)
-        ) if "attack_classes" in proposals[0]._fields else None
+        ) if "gt_probs" in proposals[0]._fields else None
 
         _log_classification_stats(scores, gt_classes)
 
@@ -56,36 +56,30 @@ class FgFastRCNNOutputLayers(FastRCNNOutputLayers):
             proposal_boxes = gt_boxes = torch.empty(
                 (0, 4), device=proposal_deltas.device
             )
-
         if branch == "attack":
-            assert class_info is not None
-            class_diff = class_info - class_info.T
-            attack_mask = class_diff >= class_diff[class_diff>0].mean()
-            attack_mask[class_info.diag()>class_info.diag().mean()]=False
-            attack_prob = torch.abs(class_diff * attack_mask)
-            attack_mask = torch.vstack([attack_mask,torch.zeros_like(attack_mask[0])])
-            mask = attack_mask[gt_classes].any(dim=1)
-            attack_classes = torch.zeros_like(gt_classes)
-            attack_classes[mask] = attack_prob[gt_classes[mask]].multinomial(1).squeeze()
+            assert attack_mask is not None
+            attack_mask_full = torch.cat([attack_mask, torch.zeros([1], device=attack_mask.device, dtype=torch.bool)]) 
+            mask = attack_mask_full[gt_classes]
             if not mask.any():
                 loss_cls = scores.sum() * 0.0
             else:
-                torch.set_printoptions(precision=3, threshold=1000, edgeitems=3, linewidth=80, profile=None, sci_mode=False)
-                print(gt_classes[mask], attack_classes[mask])
-                print(torch.softmax(scores[mask],dim=1)[range(mask.sum()),gt_classes[mask]].mean(), torch.softmax(scores[mask],dim=1)[range(mask.sum()),attack_classes[mask]].mean())
-                breakpoint()
-                # gt_probs = torch.softmax(scores[mask], dim=1)[range(mask.sum()), gt_classes[mask]]
-                # attack_probs = torch.softmax(scores[mask], dim=1)[range(mask.sum()), attack_classes[mask]]
-                # loss_cls = -0.5 * (torch.log(gt_probs) + torch.log(attack_probs)).mean()
-
-                loss_cls = cross_entropy(scores[mask], attack_classes[mask], reduction="mean")
+                # torch.set_printoptions(precision=3, threshold=1000, edgeitems=3, linewidth=80, profile=None, sci_mode=False)
+                # print(gt_classes[mask])#, attack_classes[mask])
+                # print({int(i):float(torch.softmax(scores[mask],dim=1)[gt_classes[mask]==i][:,i].mean()) for i in gt_classes[mask].unique().sort().values})#, torch.softmax(scores[mask],dim=1)[range(mask.sum()),attack_classes[mask]].mean())
+                # breakpoint()
+                loss_cls = cross_entropy(scores[mask], gt_classes[mask], reduction="mean")
         else:
-            assert class_info is None
-            loss_cls = cross_entropy(scores, gt_classes, reduction="mean")
+            assert attack_mask is None
+            if gt_probs is not None:
+                assert branch == "supervised_target"
+                loss_cls = torch.sum(-torch.log_softmax(scores, dim=1) * gt_probs, dim=1)
+                loss_cls = torch.mean(loss_cls)
+            else:
+                loss_cls = cross_entropy(scores, gt_classes, reduction="mean")
             # else:
             #     pred_classes = torch.max(scores,dim=1).indices
             #     w = torch.ones_like(gt_classes)*1.0
-            #     ci = class_info.clone()
+            #     ci = attack_mask.clone()
 
             #     # Removing background and splitting into correct and incorrect
             #     m_correct = torch.logical_and(torch.logical_and(gt_classes == pred_classes,pred_classes!=self.num_classes),gt_classes!=self.num_classes)

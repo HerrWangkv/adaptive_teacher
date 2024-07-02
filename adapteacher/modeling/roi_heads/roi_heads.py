@@ -236,7 +236,7 @@ class FgPseudoROIHeads(StandardROIHeads):
         proposals: List[Instances],
         targets: Optional[List[Instances]] = None,
         branch: str = "",
-        class_info=None,
+        attack_mask=None,
     ) -> Tuple[List[Instances], Dict[str, torch.Tensor]]:
         """
         also return predictions
@@ -249,10 +249,10 @@ class FgPseudoROIHeads(StandardROIHeads):
         del targets
 
         if self.training and branch in ["supervised", "supervised_target", "attack"]:
-            losses, predictions = self._forward_box(features, proposals, branch, class_info)
+            losses, predictions = self._forward_box(features, proposals, branch, attack_mask)
             return (proposals, predictions), losses
         elif not self.training or branch == "unsup_data_weak":
-            pred_instances, predictions = self._forward_box(features, proposals, branch, class_info)
+            pred_instances, predictions = self._forward_box(features, proposals, branch, attack_mask)
             return pred_instances, predictions
         else:
             raise ValueError(f"Unknown branch {branch}!")
@@ -262,7 +262,7 @@ class FgPseudoROIHeads(StandardROIHeads):
         features: Dict[str, torch.Tensor],
         proposals: List[Instances],
         branch: str,
-        class_info=None,
+        attack_mask=None,
     ):
         """
         also return predictions
@@ -275,7 +275,7 @@ class FgPseudoROIHeads(StandardROIHeads):
 
         if self.training and branch != "unsup_data_weak":
             losses = self.box_predictor.losses(
-                predictions, proposals, branch, class_info
+                predictions, proposals, branch, attack_mask
             )
             return losses, predictions
         else:
@@ -287,7 +287,7 @@ class FgPseudoROIHeads(StandardROIHeads):
         self, proposals: List[Instances], targets: List[Instances]
     ) -> List[Instances]:
         """
-        Add weight to proposals if necessary
+        Add gt_probs to proposals if necessary
         """
         # Augment proposals with ground-truth boxes.
         # In the case of learned proposals (e.g., RPN), when training starts
@@ -313,16 +313,16 @@ class FgPseudoROIHeads(StandardROIHeads):
                 targets_per_image.gt_boxes, proposals_per_image.proposal_boxes
             )
             matched_idxs, matched_labels = self.proposal_matcher(match_quality_matrix)
-            attack_classes = targets_per_image.attack_classes if "attack_classes" in targets_per_image._fields else None
-            sampled_idxs, gt_classes, attack_classes = self._sample_proposals(
-                matched_idxs, matched_labels, targets_per_image.gt_classes, attack_classes=attack_classes
+            gt_probs = targets_per_image.gt_probs if "gt_probs" in targets_per_image._fields else None
+            sampled_idxs, gt_classes, gt_probs = self._sample_proposals(
+                matched_idxs, matched_labels, targets_per_image.gt_classes, gt_probs=gt_probs
             )
 
             # Set target attributes of the sampled proposals:
             proposals_per_image = proposals_per_image[sampled_idxs]
             proposals_per_image.gt_classes = gt_classes
-            if attack_classes is not None:
-                proposals_per_image.attack_classes = attack_classes
+            if gt_probs is not None:
+                proposals_per_image.gt_probs = gt_probs
 
             if has_gt:
                 sampled_targets = matched_idxs[sampled_idxs]
@@ -351,14 +351,14 @@ class FgPseudoROIHeads(StandardROIHeads):
         return proposals_with_gt
 
     def _sample_proposals(
-        self, matched_idxs: torch.Tensor, matched_labels: torch.Tensor, gt_classes: torch.Tensor, attack_classes=None
+        self, matched_idxs: torch.Tensor, matched_labels: torch.Tensor, gt_classes: torch.Tensor, gt_probs=None
     ) -> Tuple[torch.Tensor, torch.Tensor]:
         """
-        add weight and attack_classes if necessary
+        add gt_probs if necessary
         """
         has_gt = gt_classes.numel() > 0
-        ret_attack = attack_classes is not None
-        has_attack = ret_attack and has_gt
+        ret_probs = gt_probs is not None
+        has_probs = ret_probs and has_gt
         # Get the corresponding GT for each proposal
         if has_gt:
             gt_classes = gt_classes[matched_idxs]
@@ -366,19 +366,20 @@ class FgPseudoROIHeads(StandardROIHeads):
             gt_classes[matched_labels == 0] = self.num_classes
             # Label ignore proposals (-1 label)
             gt_classes[matched_labels == -1] = -1
-            if has_attack:
-                attack_classes = attack_classes[matched_idxs]
-                attack_classes[matched_labels == 0] = self.num_classes
-                attack_classes[matched_labels == -1] = -1
+            if has_probs:
+                gt_probs = gt_probs[matched_idxs]
+                gt_probs[matched_labels == 0] *= 0
+                gt_probs[matched_labels == 0, -1] += 1
 
         else:
             gt_classes = torch.zeros_like(matched_idxs) + self.num_classes
-            if ret_attack:
-                attack_classes = torch.zeros_like(matched_idxs) + self.num_classes
+            if ret_probs:
+                gt_probs = torch.zeros([len(matched_idxs), self.num_classes + 1]).to(matched_idxs.device)
+                gt_probs[:,-1] += 1
 
         sampled_fg_idxs, sampled_bg_idxs = subsample_labels(
             gt_classes, self.batch_size_per_image, self.positive_fraction, self.num_classes
         )
 
         sampled_idxs = torch.cat([sampled_fg_idxs, sampled_bg_idxs], dim=0)
-        return sampled_idxs, gt_classes[sampled_idxs], attack_classes[sampled_idxs] if ret_attack else None
+        return sampled_idxs, gt_classes[sampled_idxs], gt_probs[sampled_idxs] if ret_probs else None
