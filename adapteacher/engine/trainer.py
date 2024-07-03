@@ -611,7 +611,7 @@ class TATeacherTrainer(ATeacherTrainer):
                 valid_map
             ]
         elif proposal_type == "roih":
-            valid_map = proposal_bbox_inst.scores > thres
+            valid_map = proposal_bbox_inst.probs[:,-1] < 1 - thres#proposal_bbox_inst.scores > thres
 
             # create instances containing boxes and gt_classes
             image_shape = proposal_bbox_inst.image_size
@@ -624,7 +624,7 @@ class TATeacherTrainer(ATeacherTrainer):
             # add boxes to instances
             new_proposal_inst.gt_boxes = new_boxes
             new_proposal_inst.gt_classes = proposal_bbox_inst.pred_classes[valid_map]
-            new_proposal_inst.probs = proposal_bbox_inst.probs[valid_map]
+            new_proposal_inst.gt_probs = proposal_bbox_inst.probs[valid_map]
 
         return new_proposal_inst
     
@@ -700,25 +700,29 @@ class TATeacherTrainer(ATeacherTrainer):
                 unlabel_data_k, pseudo_proposals_roih_unsup_k
             )
 
-            #  5. conduct targeted attack on unlabel_data_q
-            unlabel_pertubation, _, _ = self.model_teacher(unlabel_data_k, branch="attack", attack_mask = self.attack_mask)
-            unlabel_pertubation *= self.cfg.SEMISUPNET.ATTACK_SEVERITY #/ torch.tensor(self.cfg.MODEL.PIXEL_STD).to(unlabel_pertubation.device).view(1,-1,1,1)
-            # torch.save(unlabel_data_k, 'unlabel_data_k.pt')
-            # _, _, _ = self.model_teacher(unlabel_data_k, branch="attack", attack_mask = self.attack_mask, pertubation=unlabel_pertubation)
-
-            if unlabel_pertubation.any():
-                with torch.no_grad():
-                    proposals_roih_attacked_k, _, _ = self.model_teacher(unlabel_data_k, branch="unsup_data_weak", pertubation=unlabel_pertubation)
-
-                merged_pseudo_proposals = self.merge_pseudo_labels(pseudo_proposals_roih_unsup_k, proposals_roih_attacked_k)
-            else:
-                merged_pseudo_proposals = pseudo_proposals_roih_unsup_k
-
             unlabel_data_q = self.add_label(
-                unlabel_data_q, merged_pseudo_proposals
+                unlabel_data_q, pseudo_proposals_roih_unsup_k
             )
+
+            # #  5. conduct targeted attack on unlabel_data_q
+            # unlabel_pertubation, _, _ = self.model_teacher(unlabel_data_k, branch="attack", attack_mask = self.attack_mask)
+            # unlabel_pertubation *= self.cfg.SEMISUPNET.ATTACK_SEVERITY #/ torch.tensor(self.cfg.MODEL.PIXEL_STD).to(unlabel_pertubation.device).view(1,-1,1,1)
+            # # torch.save(unlabel_data_k, 'unlabel_data_k.pt')
+            # # _, _, _ = self.model_teacher(unlabel_data_k, branch="attack", attack_mask = self.attack_mask, pertubation=unlabel_pertubation)
+
             # if unlabel_pertubation.any():
-            #     breakpoint()
+            #     with torch.no_grad():
+            #         proposals_roih_attacked_k, _, _ = self.model_teacher(unlabel_data_k, branch="unsup_data_weak", pertubation=unlabel_pertubation)
+
+            #     merged_pseudo_proposals = self.merge_pseudo_labels(pseudo_proposals_roih_unsup_k, proposals_roih_attacked_k)
+            # else:
+            #     merged_pseudo_proposals = pseudo_proposals_roih_unsup_k
+
+            # unlabel_data_q = self.add_label(
+            #     unlabel_data_q, merged_pseudo_proposals
+            # )
+            # # if unlabel_pertubation.any():
+            # #     breakpoint()
 
 
             #  6. input strongly augmented unlabeled data into model
