@@ -847,7 +847,7 @@ class TATeacherTrainer(ATeacherTrainer):
             attacked_probs = pred_probs[minor_indices]
             attacked_probs[minor_ious < 0.5] *= 0
             attacked_probs[minor_ious < 0.5, -1] += 1
-            final_probs[minor_mask] = 0.5 * (pseudo_probs[minor_mask] + attacked_probs)
+            final_probs[minor_mask] = 0.8 * pseudo_probs[minor_mask] + 0.2 * attacked_probs
             # print(minor_ious)
             # print(final_probs[minor_mask])
             # valid_mask = torch.logical_or(~minor_mask, match_quality_matrix.max(dim=1).values > 0.5)
