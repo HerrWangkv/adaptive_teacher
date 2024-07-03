@@ -819,9 +819,23 @@ class TATeacherTrainer(ATeacherTrainer):
     def merge_pseudo_labels(self, pseudo_labels, attacked_predictions):
         merged_pseudo_labels = []
         for i in range(len(pseudo_labels)):
+            image_shape = pseudo_labels[i].image_size
+            new_proposal_inst = Instances(image_shape)
             pseudo_boxes = pseudo_labels[i].gt_boxes
             pseudo_classes = pseudo_labels[i].gt_classes
             pseudo_probs = pseudo_labels[i].probs
+            if len(pseudo_labels[i]) == 0:
+                new_proposal_inst.gt_boxes = pseudo_boxes
+                new_proposal_inst.gt_classes = pseudo_classes
+                new_proposal_inst.gt_probs = pseudo_probs
+                merged_pseudo_labels.append(new_proposal_inst)
+                continue
+            elif len(attacked_predictions[i]) == 0:
+                new_proposal_inst.gt_boxes = Boxes(torch.zeros([0, 4]).to("cuda"))
+                new_proposal_inst.gt_classes = torch.zeros([0],dtype=torch.long).to("cuda")
+                new_proposal_inst.gt_probs = torch.zeros([0, self.num_classes + 1]).to("cuda")
+                merged_pseudo_labels.append(new_proposal_inst)
+                continue
             final_probs = torch.zeros_like(pseudo_labels[i].probs)
             final_probs[range(len(pseudo_classes)), pseudo_classes] = 1
             pred_boxes = attacked_predictions[i].pred_boxes
@@ -830,16 +844,17 @@ class TATeacherTrainer(ATeacherTrainer):
             minor_mask = self.attack_mask[pseudo_classes]
             # minor_pseudo_classes = pseudo_classes[minor_mask]
             minor_ious, minor_indices = match_quality_matrix[minor_mask].max(dim=1)
-            final_probs[minor_mask] = 0.5 * (pseudo_probs[minor_mask] + pred_probs[minor_indices])
+            attacked_probs = pred_probs[minor_indices]
+            attacked_probs[minor_ious < 0.5] *= 0
+            attacked_probs[minor_ious < 0.5, -1] += 1
+            final_probs[minor_mask] = 0.5 * (pseudo_probs[minor_mask] + attacked_probs)
             # print(minor_ious)
             # print(final_probs[minor_mask])
-            valid_mask = torch.logical_or(~minor_mask, match_quality_matrix.max(dim=1).values > 0.5)
-            if (valid_mask == False).any():
-                print(f"Removing {(valid_mask==False).sum()} pseudo labels")
-            image_shape = pseudo_labels[i].image_size
-            new_proposal_inst = Instances(image_shape)
-            new_proposal_inst.gt_boxes = pseudo_boxes[valid_mask]
-            new_proposal_inst.gt_classes = pseudo_classes[valid_mask]
-            new_proposal_inst.gt_probs = final_probs[valid_mask]
+            # valid_mask = torch.logical_or(~minor_mask, match_quality_matrix.max(dim=1).values > 0.5)
+            # if (valid_mask == False).any():
+            #     print(f"Removing {(valid_mask==False).sum()} pseudo labels {pseudo_classes[valid_mask==False]}")
+            new_proposal_inst.gt_boxes = pseudo_boxes#[valid_mask]
+            new_proposal_inst.gt_classes = pseudo_classes#[valid_mask]
+            new_proposal_inst.gt_probs = final_probs#[valid_mask]
             merged_pseudo_labels.append(new_proposal_inst)
         return merged_pseudo_labels
