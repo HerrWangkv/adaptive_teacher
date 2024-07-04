@@ -625,6 +625,22 @@ class TATeacherTrainer(ATeacherTrainer):
             new_proposal_inst.gt_boxes = new_boxes
             new_proposal_inst.gt_classes = proposal_bbox_inst.pred_classes[valid_map]
             new_proposal_inst.gt_probs = proposal_bbox_inst.probs[valid_map]
+            for i in range(len(new_proposal_inst.gt_classes)):
+                if new_proposal_inst.gt_probs[i].topk(k=2).indices[1] == 0 and new_proposal_inst.gt_probs[i].argmax() == 1:
+                    new_proposal_inst.gt_probs[i] = torch.zeros_like(new_proposal_inst.gt_probs[i])
+                    new_proposal_inst.gt_probs[i,1] = 1
+                elif new_proposal_inst.gt_probs[i].topk(k=2).indices[1] == 2 and new_proposal_inst.gt_probs[i].argmax() == 3:
+                    new_proposal_inst.gt_probs[i] = torch.zeros_like(new_proposal_inst.gt_probs[i])
+                    new_proposal_inst.gt_probs[i,3] = 1
+                elif new_proposal_inst.gt_probs[i].topk(k=2).indices[1] == 2 and new_proposal_inst.gt_probs[i].argmax() == 4:
+                    new_proposal_inst.gt_probs[i] = torch.zeros_like(new_proposal_inst.gt_probs[i])
+                    new_proposal_inst.gt_probs[i,4] = 1
+                elif new_proposal_inst.gt_probs[i].topk(k=2).indices[1] == 4 and new_proposal_inst.gt_probs[i].argmax() == 5:
+                    new_proposal_inst.gt_probs[i] = torch.zeros_like(new_proposal_inst.gt_probs[i])
+                    new_proposal_inst.gt_probs[i,5] = 1
+                elif new_proposal_inst.gt_probs[i].topk(k=2).indices[1] == 7 and new_proposal_inst.gt_probs[i].argmax() == 6:
+                    new_proposal_inst.gt_probs[i] = torch.zeros_like(new_proposal_inst.gt_probs[i])
+                    new_proposal_inst.gt_probs[i,6] = 1
 
         return new_proposal_inst
     
