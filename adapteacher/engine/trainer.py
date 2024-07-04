@@ -828,11 +828,13 @@ class TATeacherTrainer(ATeacherTrainer):
             new_proposal_inst = Instances(image_shape)
             pseudo_boxes = pseudo_labels[i].gt_boxes
             pseudo_classes = pseudo_labels[i].gt_classes
-            pseudo_probs = pseudo_labels[i].probs
+            # pseudo_probs = pseudo_labels[i].probs
+            final_probs = torch.zeros_like(pseudo_labels[i].probs)
+            final_probs[range(len(pseudo_classes)), pseudo_classes] = 1
             if len(pseudo_labels[i]) == 0:
                 new_proposal_inst.gt_boxes = pseudo_boxes
                 new_proposal_inst.gt_classes = pseudo_classes
-                new_proposal_inst.gt_probs = pseudo_probs
+                new_proposal_inst.gt_probs = final_probs
                 merged_pseudo_labels.append(new_proposal_inst)
                 continue
             elif len(attacked_predictions[i]) == 0:
@@ -841,18 +843,18 @@ class TATeacherTrainer(ATeacherTrainer):
                 new_proposal_inst.gt_probs = torch.zeros([0, self.num_classes + 1]).to("cuda")
                 merged_pseudo_labels.append(new_proposal_inst)
                 continue
-            final_probs = torch.zeros_like(pseudo_labels[i].probs)
-            final_probs[range(len(pseudo_classes)), pseudo_classes] = 1
             pred_boxes = attacked_predictions[i].pred_boxes
             pred_probs = attacked_predictions[i].probs
+            pred_classes = attacked_predictions[i].probs[:,:-1].argmax(dim=1)
             match_quality_matrix = pairwise_iou(pseudo_boxes, pred_boxes)
             major_mask = self.attack_mask[pseudo_classes]
             # major_pseudo_classes = pseudo_classes[major_mask]
             major_ious, major_indices = match_quality_matrix[major_mask].max(dim=1)
-            attacked_probs = pred_probs[major_indices]
+            attacked_probs = torch.zeros_like(pred_probs[major_indices])
+            attacked_probs[range(len(major_indices)), pred_classes[major_indices]] = 1
             attacked_probs[major_ious < 0.5] *= 0
             attacked_probs[major_ious < 0.5, -1] += 1
-            final_probs[major_mask] = 0.5 * pseudo_probs[major_mask] + 0.5 * attacked_probs
+            final_probs[major_mask] = 0.5 * final_probs[major_mask] + 0.5 * attacked_probs
             # print(major_ious)
             # print(final_probs[major_mask])
             # breakpoint()

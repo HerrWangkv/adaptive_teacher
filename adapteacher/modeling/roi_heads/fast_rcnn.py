@@ -67,7 +67,7 @@ class FgFastRCNNOutputLayers(FastRCNNOutputLayers):
                 # print(gt_classes[mask])#, attack_classes[mask])
                 # print({int(i):float(torch.softmax(scores[mask],dim=1)[gt_classes[mask]==i][:,i].mean()) for i in gt_classes[mask].unique().sort().values})#, torch.softmax(scores[mask],dim=1)[range(mask.sum()),attack_classes[mask]].mean())
                 # breakpoint()
-                loss_cls = cross_entropy(scores[mask], gt_classes[mask], reduction="mean")
+                loss_cls = cross_entropy(scores[mask,:-1], gt_classes[mask], reduction="mean")
         else:
             assert attack_mask is None
             if gt_probs is not None:
