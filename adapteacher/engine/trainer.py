@@ -854,7 +854,7 @@ class TATeacherTrainer(ATeacherTrainer):
             attacked_probs[range(len(major_indices)), pred_classes[major_indices]] = 1
             attacked_probs[major_ious < 0.5] *= 0
             attacked_probs[major_ious < 0.5, -1] += 1
-            final_probs[major_mask] = 0.5 * final_probs[major_mask] + 0.5 * attacked_probs
+            final_probs[major_mask] = attacked_probs
             # print(major_ious)
             # print(final_probs[major_mask])
             # breakpoint()
