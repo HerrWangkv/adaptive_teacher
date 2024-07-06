@@ -705,8 +705,11 @@ class TATeacherTrainer(ATeacherTrainer):
             # )
 
             #  5. conduct targeted attack on unlabel_data_q
-            unlabel_pertubation, _, _ = self.model_teacher(unlabel_data_k, branch="attack", attack_mask = self.attack_mask)
-            unlabel_pertubation *= self.cfg.SEMISUPNET.ATTACK_SEVERITY #/ torch.tensor(self.cfg.MODEL.PIXEL_STD).to(unlabel_pertubation.device).view(1,-1,1,1)
+            pertubation = None
+            for i in range(5):
+                unlabel_pertubation, _, _ = self.model_teacher(unlabel_data_k, branch="attack", attack_mask = self.attack_mask, pertubation=pertubation)
+                unlabel_pertubation *= self.cfg.SEMISUPNET.ATTACK_SEVERITY #/ torch.tensor(self.cfg.MODEL.PIXEL_STD).to(unlabel_pertubation.device).view(1,-1,1,1)
+                pertubation = unlabel_pertubation if pertubation is None else pertubation + unlabel_pertubation
             # torch.save(unlabel_data_k, 'unlabel_data_k.pt')
             # _, _, _ = self.model_teacher(unlabel_data_k, branch="attack", attack_mask = self.attack_mask, pertubation=unlabel_pertubation)
 
@@ -854,7 +857,7 @@ class TATeacherTrainer(ATeacherTrainer):
             attacked_probs[range(len(major_indices)), pred_classes[major_indices]] = 1
             attacked_probs[major_ious < 0.5] *= 0
             attacked_probs[major_ious < 0.5, -1] += 1
-            final_probs[major_mask] = attacked_probs
+            final_probs[major_mask] = 0.5 * (final_probs[major_mask] + attacked_probs)
             # print(major_ious)
             # print(final_probs[major_mask])
             # breakpoint()
