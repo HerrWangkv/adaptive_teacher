@@ -674,16 +674,27 @@ class TATeacherTrainer(ATeacherTrainer):
             #  0. remove unlabeled data labels
             unlabel_data_q = self.remove_label(unlabel_data_q)
             unlabel_data_k = self.remove_label(unlabel_data_k)
+            self.update_attack_mask()
+            pertubation = None
+            for i in range(5):
+                # print("label " + str(i) + "th attack")
+                label_pertubation, _, _ = self.model_teacher(label_data_q, branch="attack", attack_mask = ~self.attack_mask, pertubation=pertubation)
+                if not label_pertubation.any():
+                    break
+                label_pertubation *= self.cfg.SEMISUPNET.ATTACK_SEVERITY
+                pertubation = label_pertubation if pertubation is None else pertubation + label_pertubation
 
             #  1. input both strongly and weakly augmented labeled data into student model
             all_label_data = label_data_k + label_data_q
+            if pertubation is not None:
+                pertubation = torch.cat([torch.zeros_like(pertubation), pertubation], dim=0)
             record_all_label_data, local_objectness, local_matrix = self.model(
-                all_label_data, branch="supervised",  ret_mean_objectness=True, ret_confusion_matrix=True#, rpn_weights=self.imbalance_metric.rpn.to("cuda")
+                all_label_data, branch="supervised",  ret_mean_objectness=True, ret_confusion_matrix=True, pertubation=pertubation
             )
             record_dict.update(record_all_label_data)
             #  2. calculate the EMA of confusion matrix
             # Sum local matrix across all GPUs
-            self.update_mean_objectness(local_objectness)
+            # self.update_mean_objectness(local_objectness)
             self.update_confusion_matrix(local_matrix)
             #  3. generate the pseudo-label using teacher model
             with torch.no_grad():
@@ -706,10 +717,15 @@ class TATeacherTrainer(ATeacherTrainer):
 
             #  5. conduct targeted attack on unlabel_data_q
             pertubation = None
+
             for i in range(5):
+                # print("unlabel " + str(i) + "th attack")
                 unlabel_pertubation, _, _ = self.model_teacher(unlabel_data_k, branch="attack", attack_mask = self.attack_mask, pertubation=pertubation)
+                if not unlabel_pertubation.any():
+                    break
                 unlabel_pertubation *= self.cfg.SEMISUPNET.ATTACK_SEVERITY #/ torch.tensor(self.cfg.MODEL.PIXEL_STD).to(unlabel_pertubation.device).view(1,-1,1,1)
                 pertubation = unlabel_pertubation if pertubation is None else pertubation + unlabel_pertubation
+                
             # torch.save(unlabel_data_k, 'unlabel_data_k.pt')
             # _, _, _ = self.model_teacher(unlabel_data_k, branch="attack", attack_mask = self.attack_mask, pertubation=unlabel_pertubation)
 
@@ -821,6 +837,8 @@ class TATeacherTrainer(ATeacherTrainer):
                 self.cfg.SEMISUPNET.EMA_IMBALANCE_METRIC * self.imbalance_metric.roi[mask]
                 + (1 - self.cfg.SEMISUPNET.EMA_IMBALANCE_METRIC) * local_matrix[mask]
             )
+    
+    def update_attack_mask(self):
         class_diff = self.imbalance_metric.roi[:,:-1] - self.imbalance_metric.roi[:,:-1].T
         self.attack_mask = (class_diff > class_diff[class_diff > 0].mean()).any(dim=0)
         
