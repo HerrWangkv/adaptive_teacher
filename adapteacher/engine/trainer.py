@@ -643,6 +643,14 @@ class TATeacherTrainer(ATeacherTrainer):
         data_time = time.perf_counter() - start
 
         # burn-in stage (supervised training with labeled data)
+        if self.iter == self.cfg.SEMISUPNET.BURN_UP_STEP // 2:
+                # update copy the the whole model
+                self._update_teacher_model(keep_rate=0.00)
+        elif (self.iter > self.cfg.SEMISUPNET.BURN_UP_STEP // 2) and (
+            self.iter - self.cfg.SEMISUPNET.BURN_UP_STEP
+        ) % self.cfg.SEMISUPNET.TEACHER_UPDATE_ITER == 0:
+            self._update_teacher_model(keep_rate=self.cfg.SEMISUPNET.EMA_KEEP_RATE)
+
         if self.iter < self.cfg.SEMISUPNET.BURN_UP_STEP:
 
             # input both strong and weak supervised data into model
@@ -659,37 +667,27 @@ class TATeacherTrainer(ATeacherTrainer):
             losses = sum(loss_dict.values())
 
         else:
-            if self.iter == self.cfg.SEMISUPNET.BURN_UP_STEP:
-                # update copy the the whole model
-                self._update_teacher_model(keep_rate=0.00)
-                # self.model.build_discriminator()
-
-            elif (
-                self.iter - self.cfg.SEMISUPNET.BURN_UP_STEP
-            ) % self.cfg.SEMISUPNET.TEACHER_UPDATE_ITER == 0:
-                self._update_teacher_model(keep_rate=self.cfg.SEMISUPNET.EMA_KEEP_RATE)
-
             record_dict = {}
 
             #  0. remove unlabeled data labels
             unlabel_data_q = self.remove_label(unlabel_data_q)
             unlabel_data_k = self.remove_label(unlabel_data_k)
             self.update_attack_mask()
-            pertubation = None
-            for i in range(5):
-                # print("label " + str(i) + "th attack")
-                label_pertubation, _, _ = self.model_teacher(label_data_q, branch="attack", attack_mask = ~self.attack_mask, pertubation=pertubation)
-                if not label_pertubation.any():
-                    break
-                label_pertubation *= self.cfg.SEMISUPNET.ATTACK_SEVERITY
-                pertubation = label_pertubation if pertubation is None else pertubation + label_pertubation
+            # pertubation = None
+            # for i in range(5):
+            #     # print("label " + str(i) + "th attack")
+            #     label_pertubation, _, _ = self.model_teacher(label_data_q, branch="attack", attack_mask = ~self.attack_mask, pertubation=pertubation)
+            #     if not label_pertubation.any():
+            #         break
+            #     label_pertubation *= self.cfg.SEMISUPNET.ATTACK_SEVERITY
+            #     pertubation = label_pertubation if pertubation is None else pertubation + label_pertubation
 
             #  1. input both strongly and weakly augmented labeled data into student model
             all_label_data = label_data_k + label_data_q
-            if pertubation is not None:
-                pertubation = torch.cat([torch.zeros_like(pertubation), pertubation], dim=0)
+            # if pertubation is not None:
+            #     pertubation = torch.cat([torch.zeros_like(pertubation), pertubation], dim=0)
             record_all_label_data, local_objectness, local_matrix = self.model(
-                all_label_data, branch="supervised",  ret_mean_objectness=True, ret_confusion_matrix=True, pertubation=pertubation
+                all_label_data, branch="supervised",  ret_mean_objectness=True, ret_confusion_matrix=True#, pertubation=pertubation
             )
             record_dict.update(record_all_label_data)
             #  2. calculate the EMA of confusion matrix
