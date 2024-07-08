@@ -716,7 +716,7 @@ class TATeacherTrainer(ATeacherTrainer):
             #  5. conduct targeted attack on unlabel_data_q
             pertubation = None
 
-            for i in range(5):
+            for i in range(1):
                 # print("unlabel " + str(i) + "th attack")
                 unlabel_pertubation, _, _ = self.model_teacher(unlabel_data_k, branch="attack", attack_mask = self.attack_mask, pertubation=pertubation)
                 if not unlabel_pertubation.any():
