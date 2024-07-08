@@ -727,9 +727,9 @@ class TATeacherTrainer(ATeacherTrainer):
             # torch.save(unlabel_data_k, 'unlabel_data_k.pt')
             # _, _, _ = self.model_teacher(unlabel_data_k, branch="attack", attack_mask = self.attack_mask, pertubation=unlabel_pertubation)
 
-            if unlabel_pertubation.any():
+            if pertubation is not None:
                 with torch.no_grad():
-                    proposals_roih_attacked_k, _, _ = self.model_teacher(unlabel_data_k, branch="unsup_data_weak", pertubation=unlabel_pertubation)
+                    proposals_roih_attacked_k, _, _ = self.model_teacher(unlabel_data_k, branch="unsup_data_weak", pertubation=pertubation)
 
                 merged_pseudo_proposals = self.merge_pseudo_labels(pseudo_proposals_roih_unsup_k, proposals_roih_attacked_k)
             else:
