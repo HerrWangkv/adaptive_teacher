@@ -718,7 +718,7 @@ class TATeacherTrainer(ATeacherTrainer):
 
             for i in range(5):
                 # print("unlabel " + str(i) + "th attack")
-                unlabel_pertubation, _, _ = self.model_teacher(unlabel_data_k, branch="attack", attack_mask = self.attack_mask, pertubation=pertubation)
+                unlabel_pertubation, _, _ = self.model_teacher(unlabel_data_k, branch="attack", attack_mask = self.attack_mask.any(dim=0), pertubation=pertubation)
                 if not unlabel_pertubation.any():
                     break
                 unlabel_pertubation *= self.cfg.SEMISUPNET.ATTACK_SEVERITY #/ torch.tensor(self.cfg.MODEL.PIXEL_STD).to(unlabel_pertubation.device).view(1,-1,1,1)
@@ -838,7 +838,7 @@ class TATeacherTrainer(ATeacherTrainer):
     
     def update_attack_mask(self):
         class_diff = self.imbalance_metric.roi[:,:-1] - self.imbalance_metric.roi[:,:-1].T
-        self.attack_mask = (class_diff > class_diff[class_diff > 0].mean()).any(dim=0)
+        self.attack_mask = (class_diff > class_diff[class_diff > 0].mean())
         
     def merge_pseudo_labels(self, pseudo_labels, attacked_predictions):
         merged_pseudo_labels = []
@@ -866,11 +866,13 @@ class TATeacherTrainer(ATeacherTrainer):
             pred_probs = attacked_predictions[i].probs
             pred_classes = attacked_predictions[i].probs[:,:-1].argmax(dim=1)
             match_quality_matrix = pairwise_iou(pseudo_boxes, pred_boxes)
-            major_mask = self.attack_mask[pseudo_classes]
+            major_mask = self.attack_mask.any(dim=0)[pseudo_classes]
             # major_pseudo_classes = pseudo_classes[major_mask]
             major_ious, major_indices = match_quality_matrix[major_mask].max(dim=1)
-            attacked_probs = torch.zeros_like(pred_probs[major_indices])
-            attacked_probs[range(len(major_indices)), pred_classes[major_indices]] = 1
+            attack_mask = self.attack_mask[pred_classes[major_indices],pseudo_classes[major_mask]]
+            attacked_probs = torch.tensor(final_probs[major_mask])
+            attacked_probs[attack_mask] *= 0
+            attacked_probs[attack_mask, pred_classes[major_indices][attack_mask]] = 1
             attacked_probs[major_ious < 0.5] *= 0
             attacked_probs[major_ious < 0.5, -1] += 1
             final_probs[major_mask] = 0.5 * (final_probs[major_mask] + attacked_probs)
