@@ -57,9 +57,11 @@ class FgFastRCNNOutputLayers(FastRCNNOutputLayers):
                 (0, 4), device=proposal_deltas.device
             )
         if branch == "attack":
-            assert attack_mask is not None
-            attack_mask_full = torch.cat([attack_mask, torch.zeros([1], device=attack_mask.device, dtype=torch.bool)]) 
-            mask = attack_mask_full[gt_classes]
+            if attack_mask is not None:
+                attack_mask_full = torch.cat([attack_mask, torch.zeros([1], device=attack_mask.device, dtype=torch.bool)]) 
+                mask = attack_mask_full[gt_classes]
+            else:
+                mask = gt_classes != self.num_classes
             if not mask.any():
                 loss_cls = scores.sum() * 0.0
             else:
