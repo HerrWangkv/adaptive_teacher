@@ -715,10 +715,11 @@ class TATeacherTrainer(ATeacherTrainer):
 
             #  5. conduct targeted attack on unlabel_data_q
             pertubation = None
-
+            attack_mask = torch.zeros_like(self.attack_mask, dtype=bool)
+            attack_mask[5] = True
             for i in range(1):
                 # print("unlabel " + str(i) + "th attack")
-                unlabel_pertubation, _, _ = self.model_teacher(unlabel_data_q, branch="attack", pertubation=pertubation)
+                unlabel_pertubation, _, _ = self.model_teacher(unlabel_data_q, branch="attack", attack_mask= attack_mask,pertubation=pertubation)
                 if not unlabel_pertubation.any():
                     break
                 unlabel_pertubation *= self.cfg.SEMISUPNET.ATTACK_SEVERITY #/ torch.tensor(self.cfg.MODEL.PIXEL_STD).to(unlabel_pertubation.device).view(1,-1,1,1)
@@ -838,7 +839,7 @@ class TATeacherTrainer(ATeacherTrainer):
     
     def update_attack_mask(self):
         class_diff = self.imbalance_metric.roi[:,:-1] - self.imbalance_metric.roi[:,:-1].T
-        self.attack_mask = (class_diff > class_diff[class_diff > 0].mean()).any(dim=0)
+        self.attack_mask = (class_diff > class_diff[class_diff > 0].mean()).any(dim=1)
         
     def merge_pseudo_labels(self, pseudo_labels, attacked_predictions):
         merged_pseudo_labels = []
