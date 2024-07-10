@@ -716,12 +716,12 @@ class TATeacherTrainer(ATeacherTrainer):
             #  5. conduct targeted attack on unlabel_data_q
             pertubation = None
             attack_mask = torch.zeros_like(self.attack_mask, dtype=bool)
-            attack_mask[3] = True # truck
+            attack_mask[5] = True # train
             for i in range(1):
                 # print("unlabel " + str(i) + "th attack")
                 unlabel_pertubation, _, _ = self.model_teacher(unlabel_data_q, branch="attack", attack_mask= attack_mask,pertubation=pertubation)
-                if not unlabel_pertubation.any():
-                    break
+                # if not unlabel_pertubation.any():
+                #     break
                 unlabel_pertubation *= self.cfg.SEMISUPNET.ATTACK_SEVERITY #/ torch.tensor(self.cfg.MODEL.PIXEL_STD).to(unlabel_pertubation.device).view(1,-1,1,1)
                 pertubation = unlabel_pertubation if pertubation is None else pertubation + unlabel_pertubation
                 
@@ -744,8 +744,10 @@ class TATeacherTrainer(ATeacherTrainer):
 
 
             #  6. input strongly augmented unlabeled data into model
+            all_unlabel_data = unlabel_data_q + unlabel_data_q
+            pertubation = torch.cat((torch.zeros_like(pertubation), pertubation), dim=0)
             record_all_unlabel_data, _, _ = self.model(
-                unlabel_data_q, branch="supervised_target", pertubation=pertubation
+                all_unlabel_data, branch="supervised_target", pertubation=pertubation
             )
             new_record_all_unlabel_data = {}
             for key in record_all_unlabel_data.keys():
