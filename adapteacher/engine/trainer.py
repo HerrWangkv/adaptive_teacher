@@ -716,9 +716,7 @@ class TATeacherTrainer(ATeacherTrainer):
             #  5. conduct targeted attack on unlabel_data_q
             pertubation = None
             attack_mask = torch.zeros_like(self.attack_mask, dtype=bool)
-            attack_mask[0] = True # person
-            attack_mask[2] = True # car
-            attack_mask[7] = True # bicycle
+            attack_mask[3] = True # truck
             for i in range(1):
                 # print("unlabel " + str(i) + "th attack")
                 unlabel_pertubation, _, _ = self.model_teacher(unlabel_data_q, branch="attack", attack_mask= attack_mask,pertubation=pertubation)
