@@ -709,42 +709,42 @@ class TATeacherTrainer(ATeacherTrainer):
                 unlabel_data_k, pseudo_proposals_roih_unsup_k
             )
 
-            unlabel_data_q = self.add_label(
-                unlabel_data_q, pseudo_proposals_roih_unsup_k
-            )
+            # unlabel_data_q = self.add_label(
+            #     unlabel_data_q, pseudo_proposals_roih_unsup_k
+            # )
 
             #  5. conduct targeted attack on unlabel_data_q
             pertubation = None
             for i in range(1):
                 # print("unlabel " + str(i) + "th attack")
                 # print("Teacher:")
-                pertubation_teacher, _, _ = self.model_teacher(unlabel_data_q, branch="attack",pertubation=pertubation)
+                pertubation_teacher, _, _ = self.model_teacher(unlabel_data_k, branch="attack",pertubation=pertubation)
                 # print("Student:")
                 # pertubation_student, _, _ = self.model(unlabel_data_q, branch="attack",pertubation=pertubation)
-                step_pertubation = self.cfg.SEMISUPNET.ATTACK_SEVERITY * (-pertubation_teacher)
+                step_pertubation = self.cfg.SEMISUPNET.ATTACK_SEVERITY * (pertubation_teacher)
                 pertubation = step_pertubation if pertubation is None else pertubation + step_pertubation
                 
             # torch.save(unlabel_data_k, 'unlabel_data_k.pt')
-            # _, _, _ = self.model_teacher(unlabel_data_k, branch="attack", attack_mask = self.attack_mask, pertubation=unlabel_pertubation)
+            # _, _, _ = self.model_teacher(unlabel_data_k, branch="attack", attack_mask = self.attack_mask, pertubation=pertubation)
 
-            # if pertubation is not None:
-            #     with torch.no_grad():
-            #         proposals_roih_attacked_k, _, _ = self.model_teacher(unlabel_data_k, branch="unsup_data_weak", pertubation=pertubation)
+            if pertubation is not None:
+                with torch.no_grad():
+                    proposals_roih_attacked_k, _, _ = self.model_teacher(unlabel_data_k, branch="unsup_data_weak", pertubation=pertubation)
 
-            #     merged_pseudo_proposals = self.merge_pseudo_labels(pseudo_proposals_roih_unsup_k, proposals_roih_attacked_k)
-            # else:
-            #     merged_pseudo_proposals = pseudo_proposals_roih_unsup_k
+                merged_pseudo_proposals = self.merge_pseudo_labels(pseudo_proposals_roih_unsup_k, proposals_roih_attacked_k)
+            else:
+                merged_pseudo_proposals = pseudo_proposals_roih_unsup_k
 
-            # unlabel_data_q = self.add_label(
-            #     unlabel_data_q, merged_pseudo_proposals
-            # )
+            unlabel_data_q = self.add_label(
+                unlabel_data_q, merged_pseudo_proposals
+            )
             # if unlabel_pertubation.any():
             #     breakpoint()
 
 
             #  6. input strongly augmented unlabeled data into model
             record_all_unlabel_data, _, _ = self.model(
-                unlabel_data_q, branch="supervised_target", pertubation=pertubation
+                unlabel_data_q, branch="supervised_target"
             )
             new_record_all_unlabel_data = {}
             for key in record_all_unlabel_data.keys():
@@ -840,7 +840,7 @@ class TATeacherTrainer(ATeacherTrainer):
         class_diff = self.imbalance_metric.roi[:,:-1] - self.imbalance_metric.roi[:,:-1].T
         self.attack_mask = (class_diff > class_diff[class_diff > 0].mean()).any(dim=1)
         
-    def merge_pseudo_labels(self, pseudo_labels, attacked_predictions):
+    def merge_pseudo_labels(self, pseudo_labels, attacked_predictions, factor=0.5):
         merged_pseudo_labels = []
         for i in range(len(pseudo_labels)):
             image_shape = pseudo_labels[i].image_size
@@ -850,38 +850,34 @@ class TATeacherTrainer(ATeacherTrainer):
             # pseudo_probs = pseudo_labels[i].probs
             final_probs = torch.zeros_like(pseudo_labels[i].probs)
             final_probs[range(len(pseudo_classes)), pseudo_classes] = 1
-            if len(pseudo_labels[i]) == 0:
+            if len(pseudo_labels[i]) == 0 or len(attacked_predictions[i]) == 0:
                 new_proposal_inst.gt_boxes = pseudo_boxes
                 new_proposal_inst.gt_classes = pseudo_classes
+                if len(pseudo_labels[i]) != 0:
+                    final_probs *= factor
+                    final_probs[:,-1] += 1 - factor
                 new_proposal_inst.gt_probs = final_probs
                 merged_pseudo_labels.append(new_proposal_inst)
                 continue
-            elif len(attacked_predictions[i]) == 0:
-                new_proposal_inst.gt_boxes = Boxes(torch.zeros([0, 4]).to("cuda"))
-                new_proposal_inst.gt_classes = torch.zeros([0],dtype=torch.long).to("cuda")
-                new_proposal_inst.gt_probs = torch.zeros([0, self.num_classes + 1]).to("cuda")
-                merged_pseudo_labels.append(new_proposal_inst)
-                continue
             pred_boxes = attacked_predictions[i].pred_boxes
-            pred_probs = attacked_predictions[i].probs
             pred_classes = attacked_predictions[i].probs[:,:-1].argmax(dim=1)
             match_quality_matrix = pairwise_iou(pseudo_boxes, pred_boxes)
-            major_mask = self.attack_mask[pseudo_classes]
-            # major_pseudo_classes = pseudo_classes[major_mask]
-            major_ious, major_indices = match_quality_matrix[major_mask].max(dim=1)
-            attacked_probs = torch.zeros_like(pred_probs[major_indices])
-            attacked_probs[range(len(major_indices)), pred_classes[major_indices]] = 1
-            attacked_probs[major_ious < 0.5] *= 0
-            attacked_probs[major_ious < 0.5, -1] += 1
-            final_probs[major_mask] = 0.5 * (final_probs[major_mask] + attacked_probs)
-            # print(major_ious)
-            # print(final_probs[major_mask])
-            # breakpoint()
+            ious, indices = match_quality_matrix.max(dim=1)
+            attacked_classes = pred_classes[indices]
+            attacked_classes[ious < 0.5] = self.num_classes
+            attacked_probs = torch.zeros_like(final_probs)
+            attacked_probs[range(len(indices)), attacked_classes] = 1
+            final_probs = factor * final_probs + (1 - factor) * attacked_probs
             # valid_mask = torch.logical_or(~major_mask, match_quality_matrix.max(dim=1).values > 0.5)
             # if (valid_mask == False).any():
             #     print(f"Removing {(valid_mask==False).sum()} pseudo labels {pseudo_classes[valid_mask==False]}")
             new_proposal_inst.gt_boxes = pseudo_boxes#[valid_mask]
-            new_proposal_inst.gt_classes = pseudo_classes#[valid_mask]
+            new_proposal_inst.gt_classes = attacked_classes#[valid_mask]
             new_proposal_inst.gt_probs = final_probs#[valid_mask]
             merged_pseudo_labels.append(new_proposal_inst)
+            # if (pseudo_classes!= attacked_classes).any():
+            #     print(final_probs)
+            #     print((pseudo_classes!= attacked_classes).sum())
+            #     torch.save(merged_pseudo_labels, "merged_pseudo_labels.pt")
+            #     breakpoint()
         return merged_pseudo_labels
