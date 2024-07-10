@@ -60,16 +60,16 @@ class FgFastRCNNOutputLayers(FastRCNNOutputLayers):
             if attack_mask is not None:
                 attack_mask_full = torch.cat([attack_mask, torch.zeros([1], device=attack_mask.device, dtype=torch.bool)]) 
                 mask = attack_mask_full[gt_classes]
+                if not mask.any():
+                    loss_cls = scores.sum() * 0.0
+                else:
+                    # torch.set_printoptions(precision=3, threshold=1000, edgeitems=3, linewidth=80, profile=None, sci_mode=False)
+                    # print(gt_classes[mask])#, attack_classes[mask])
+                    # print({int(i):float(torch.softmax(scores[mask],dim=1)[gt_classes[mask]==i][:,i].mean()) for i in gt_classes[mask].unique().sort().values})#, torch.softmax(scores[mask],dim=1)[range(mask.sum()),attack_classes[mask]].mean())
+                    # breakpoint()
+                    loss_cls = cross_entropy(scores[mask,:-1], gt_classes[mask], reduction="mean")
             else:
-                mask = gt_classes != self.num_classes
-            if not mask.any():
-                loss_cls = scores.sum() * 0.0
-            else:
-                # torch.set_printoptions(precision=3, threshold=1000, edgeitems=3, linewidth=80, profile=None, sci_mode=False)
-                # print(gt_classes[mask])#, attack_classes[mask])
-                # print({int(i):float(torch.softmax(scores[mask],dim=1)[gt_classes[mask]==i][:,i].mean()) for i in gt_classes[mask].unique().sort().values})#, torch.softmax(scores[mask],dim=1)[range(mask.sum()),attack_classes[mask]].mean())
-                # breakpoint()
-                loss_cls = cross_entropy(scores[mask,:-1], gt_classes[mask], reduction="mean")
+                loss_cls = cross_entropy(scores, gt_classes, reduction="mean")
         else:
             assert attack_mask is None
             if gt_probs is not None:

@@ -715,15 +715,14 @@ class TATeacherTrainer(ATeacherTrainer):
 
             #  5. conduct targeted attack on unlabel_data_q
             pertubation = None
-            attack_mask = torch.zeros_like(self.attack_mask, dtype=bool)
-            attack_mask[5] = True # train
             for i in range(1):
                 # print("unlabel " + str(i) + "th attack")
-                unlabel_pertubation, _, _ = self.model_teacher(unlabel_data_q, branch="attack", attack_mask= attack_mask,pertubation=pertubation)
-                # if not unlabel_pertubation.any():
-                #     break
-                unlabel_pertubation *= self.cfg.SEMISUPNET.ATTACK_SEVERITY #/ torch.tensor(self.cfg.MODEL.PIXEL_STD).to(unlabel_pertubation.device).view(1,-1,1,1)
-                pertubation = unlabel_pertubation if pertubation is None else pertubation + unlabel_pertubation
+                # print("Teacher:")
+                pertubation_teacher, _, _ = self.model_teacher(unlabel_data_q, branch="attack",pertubation=pertubation)
+                # print("Student:")
+                # pertubation_student, _, _ = self.model(unlabel_data_q, branch="attack",pertubation=pertubation)
+                step_pertubation = self.cfg.SEMISUPNET.ATTACK_SEVERITY * (-pertubation_teacher)
+                pertubation = step_pertubation if pertubation is None else pertubation + step_pertubation
                 
             # torch.save(unlabel_data_k, 'unlabel_data_k.pt')
             # _, _, _ = self.model_teacher(unlabel_data_k, branch="attack", attack_mask = self.attack_mask, pertubation=unlabel_pertubation)
@@ -744,10 +743,8 @@ class TATeacherTrainer(ATeacherTrainer):
 
 
             #  6. input strongly augmented unlabeled data into model
-            all_unlabel_data = unlabel_data_q + unlabel_data_q
-            pertubation = torch.cat((torch.zeros_like(pertubation), pertubation), dim=0)
             record_all_unlabel_data, _, _ = self.model(
-                all_unlabel_data, branch="supervised_target", pertubation=pertubation
+                unlabel_data_q, branch="supervised_target", pertubation=pertubation
             )
             new_record_all_unlabel_data = {}
             for key in record_all_unlabel_data.keys():
