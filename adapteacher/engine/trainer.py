@@ -865,6 +865,7 @@ class TATeacherTrainer(ATeacherTrainer):
             ious, indices = match_quality_matrix.max(dim=1)
             attacked_classes = pred_classes[indices]
             attacked_classes[ious < 0.5] = self.num_classes
+            attacked_classes[pseudo_classes == 5] = 5
             attacked_probs = torch.zeros_like(final_probs)
             attacked_probs[range(len(indices)), attacked_classes] = 1
             final_probs = factor * final_probs + (1 - factor) * attacked_probs
