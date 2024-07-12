@@ -841,8 +841,7 @@ class TATeacherTrainer(ATeacherTrainer):
             )
     
     def update_attack_mask(self):
-        class_diff = self.imbalance_metric.roi[:,:-1] - self.imbalance_metric.roi[:,:-1].T
-        self.attack_mask = (class_diff > class_diff[class_diff > 0].mean())
+        self.attack_mask = (self.imbalance_metric.roi.diag() < self.imbalance_metric.roi.diag().mean()).cuda()
      
     def merge_pseudo_labels(self, pseudo_labels, attacked_predictions):
         merged_pseudo_labels = []
@@ -868,12 +867,13 @@ class TATeacherTrainer(ATeacherTrainer):
             # if iou smaller than 0.5, use pseudo label class
             attacked_classes_for_pseudo_labels[ious < 0.5] = pseudo_classes[ious < 0.5]
             # if attacked class is more minor than pseudo label class, use a soft label (0.5 major, 0.5 minor)
-            attack_mask=self.attack_mask[attacked_classes_for_pseudo_labels, pseudo_classes]
+            attack_mask=torch.logical_and(pseudo_classes!=attacked_classes_for_pseudo_labels, self.attack_mask[attacked_classes_for_pseudo_labels])
             pseudo_classes[attack_mask] = attacked_classes_for_pseudo_labels[attack_mask]
             pseudo_probs[attack_mask] *= 0.5
             pseudo_probs[attack_mask, attacked_classes_for_pseudo_labels[attack_mask]] += 0.5
-            # if an attacked prediction is not used to match any pseudo label, add it to pseudo labels with a soft label (0.5 back, 0.5 obj)
-            pred_not_in_pseudo_mask = torch.ones_like(pred_classes, dtype=torch.bool)
+            # if an attacked prediction is not used to match any pseudo label and its class is minor, add it to pseudo labels with a soft label (0.5 back, 0.5 obj)
+            pred_not_in_pseudo_mask = torch.zeros_like(pred_classes, dtype=torch.bool)
+            pred_not_in_pseudo_mask[self.attack_mask[pred_classes]] = True
             pred_not_in_pseudo_mask[indices[ious>=0.5].unique()] = False
             pred_not_in_pseudo_probs = torch.zeros([pred_not_in_pseudo_mask.sum(), self.num_classes + 1], device=pseudo_probs.device)
             pred_not_in_pseudo_probs[range(pred_not_in_pseudo_mask.sum()), pred_classes[pred_not_in_pseudo_mask]] += 0.5
@@ -885,8 +885,9 @@ class TATeacherTrainer(ATeacherTrainer):
             new_proposal_inst.gt_classes = torch.cat([pseudo_classes, pred_classes[pred_not_in_pseudo_mask]])#[valid_mask]
             new_proposal_inst.gt_probs = torch.cat([pseudo_probs, pred_not_in_pseudo_probs], dim=0)#[valid_mask]
             merged_pseudo_labels.append(new_proposal_inst)
-            # if pred_not_in_pseudo_mask.any() and attack_mask.any():
-            #     # print(attack_mask.sum())
+            # if pred_not_in_pseudo_mask.any() or attack_mask.any():
+            #     print(pseudo_classes[attack_mask])
+            #     print(pred_classes[pred_not_in_pseudo_mask])
             #     torch.save(merged_pseudo_labels, "merged_pseudo_labels.pt")
             #     breakpoint()
         return merged_pseudo_labels
