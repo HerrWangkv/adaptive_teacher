@@ -847,9 +847,12 @@ class TATeacherTrainer(ATeacherTrainer):
             new_proposal_inst = Instances(image_shape)
             pseudo_boxes = pseudo_labels[i].gt_boxes
             pseudo_classes = pseudo_labels[i].gt_classes
+            final_probs = torch.zeros_like(pseudo_labels[i].probs)
+            final_probs[range(len(pseudo_classes)), pseudo_classes] = 1
             if len(pseudo_labels[i]) == 0 or len(attacked_predictions[i]) == 0:
                 new_proposal_inst.gt_boxes = pseudo_boxes
                 new_proposal_inst.gt_classes = pseudo_classes
+                new_proposal_inst.gt_probs = final_probs
                 merged_pseudo_labels.append(new_proposal_inst)
                 continue
             pred_boxes = attacked_predictions[i].pred_boxes
@@ -859,12 +862,14 @@ class TATeacherTrainer(ATeacherTrainer):
             attacked_classes = pred_classes[indices]
             attacked_classes[ious < 0.5] = pseudo_classes[ious < 0.5]
             attack_mask=self.attack_mask[attacked_classes, pseudo_classes]
-            pseudo_classes[attack_mask] = attacked_classes[attack_mask]
+            final_probs[attack_mask] *= 0.5
+            final_probs[attack_mask, attacked_classes[attack_mask]] += 0.5
             # valid_mask = torch.logical_or(~major_mask, match_quality_matrix.max(dim=1).values > 0.5)
             # if (valid_mask == False).any():
             #     print(f"Removing {(valid_mask==False).sum()} pseudo labels {pseudo_classes[valid_mask==False]}")
             new_proposal_inst.gt_boxes = pseudo_boxes#[valid_mask]
             new_proposal_inst.gt_classes = pseudo_classes#[valid_mask]
+            new_proposal_inst.gt_probs = final_probs#[valid_mask]
             merged_pseudo_labels.append(new_proposal_inst)
             # if attack_mask.any():
             #     print(attack_mask.sum())
