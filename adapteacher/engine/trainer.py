@@ -843,7 +843,7 @@ class TATeacherTrainer(ATeacherTrainer):
     def update_attack_mask(self):
         self.attack_mask = (self.imbalance_metric.roi.diag() < self.imbalance_metric.roi.diag().mean()).cuda()
      
-    def merge_pseudo_labels(self, pseudo_labels, attacked_predictions):
+    def merge_pseudo_labels(self, pseudo_labels, attacked_predictions, factor=0.5):
         merged_pseudo_labels = []
         for i in range(len(pseudo_labels)):
             image_shape = pseudo_labels[i].image_size
@@ -866,18 +866,17 @@ class TATeacherTrainer(ATeacherTrainer):
             attacked_classes_for_pseudo_labels = pred_classes[indices]
             # if iou smaller than 0.5, use pseudo label class
             attacked_classes_for_pseudo_labels[ious < 0.5] = pseudo_classes[ious < 0.5]
-            # if attacked class is more minor than pseudo label class, use a soft label (0.5 major, 0.5 minor)
+            # if attacked class is more minor than pseudo label class, use a soft label (factor * major, (1-factor) * minor)
             attack_mask=torch.logical_and(pseudo_classes!=attacked_classes_for_pseudo_labels, self.attack_mask[attacked_classes_for_pseudo_labels])
             pseudo_classes[attack_mask] = attacked_classes_for_pseudo_labels[attack_mask]
-            pseudo_probs[attack_mask] *= 0.5
-            pseudo_probs[attack_mask, attacked_classes_for_pseudo_labels[attack_mask]] += 0.5
-            # if an attacked prediction is not used to match any pseudo label and its class is minor, add it to pseudo labels with a soft label (0.5 back, 0.5 obj)
-            pred_not_in_pseudo_mask = torch.zeros_like(pred_classes, dtype=torch.bool)
-            pred_not_in_pseudo_mask[self.attack_mask[pred_classes]] = True
+            pseudo_probs[attack_mask] *= factor
+            pseudo_probs[attack_mask, attacked_classes_for_pseudo_labels[attack_mask]] += 1-factor
+            # if an attacked prediction is not used to match any pseudo label, add it to pseudo labels with a soft label (factor *  back, (1-factor) * obj)
+            pred_not_in_pseudo_mask = torch.ones_like(pred_classes, dtype=torch.bool)
             pred_not_in_pseudo_mask[indices[ious>=0.5].unique()] = False
             pred_not_in_pseudo_probs = torch.zeros([pred_not_in_pseudo_mask.sum(), self.num_classes + 1], device=pseudo_probs.device)
-            pred_not_in_pseudo_probs[range(pred_not_in_pseudo_mask.sum()), pred_classes[pred_not_in_pseudo_mask]] += 1 #0.5
-            # pred_not_in_pseudo_probs[range(pred_not_in_pseudo_mask.sum()), -1] += 0.5
+            pred_not_in_pseudo_probs[range(pred_not_in_pseudo_mask.sum()), pred_classes[pred_not_in_pseudo_mask]] += 1# - factor
+            # pred_not_in_pseudo_probs[range(pred_not_in_pseudo_mask.sum()), -1] += factor
             # valid_mask = torch.logical_or(~major_mask, match_quality_matrix.max(dim=1).values > 0.5)
             # if (valid_mask == False).any():
             #     print(f"Removing {(valid_mask==False).sum()} pseudo labels {pseudo_classes[valid_mask==False]}")
