@@ -876,8 +876,8 @@ class TATeacherTrainer(ATeacherTrainer):
             pred_not_in_pseudo_mask[self.attack_mask[pred_classes]] = True
             pred_not_in_pseudo_mask[indices[ious>=0.5].unique()] = False
             pred_not_in_pseudo_probs = torch.zeros([pred_not_in_pseudo_mask.sum(), self.num_classes + 1], device=pseudo_probs.device)
-            pred_not_in_pseudo_probs[range(pred_not_in_pseudo_mask.sum()), pred_classes[pred_not_in_pseudo_mask]] += 0.5
-            pred_not_in_pseudo_probs[range(pred_not_in_pseudo_mask.sum()), -1] += 0.5
+            pred_not_in_pseudo_probs[range(pred_not_in_pseudo_mask.sum()), pred_classes[pred_not_in_pseudo_mask]] += 1 #0.5
+            # pred_not_in_pseudo_probs[range(pred_not_in_pseudo_mask.sum()), -1] += 0.5
             # valid_mask = torch.logical_or(~major_mask, match_quality_matrix.max(dim=1).values > 0.5)
             # if (valid_mask == False).any():
             #     print(f"Removing {(valid_mask==False).sum()} pseudo labels {pseudo_classes[valid_mask==False]}")
