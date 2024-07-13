@@ -4,10 +4,12 @@ import time
 import logging
 import torch
 from torch import nn
+import torch.nn.functional as F
 from torch.nn.parallel import DistributedDataParallel
 import torch.distributed as dist
 from fvcore.nn.precise_bn import get_bn_modules
 import numpy as np
+import random
 from collections import OrderedDict
 
 import detectron2.utils.comm as comm
@@ -742,6 +744,7 @@ class TATeacherTrainer(ATeacherTrainer):
             unlabel_data_q = self.add_label(
                 unlabel_data_q, merged_pseudo_proposals
             )
+            unlabel_data_q = self.resize(unlabel_data_q)
             # if unlabel_pertubation.any():
             #     breakpoint()
 
@@ -875,8 +878,8 @@ class TATeacherTrainer(ATeacherTrainer):
             pred_not_in_pseudo_mask = torch.ones_like(pred_classes, dtype=torch.bool)
             pred_not_in_pseudo_mask[indices[ious>=0.5].unique()] = False
             pred_not_in_pseudo_probs = torch.zeros([pred_not_in_pseudo_mask.sum(), self.num_classes + 1], device=pseudo_probs.device)
-            pred_not_in_pseudo_probs[range(pred_not_in_pseudo_mask.sum()), pred_classes[pred_not_in_pseudo_mask]] += 1# - factor
-            # pred_not_in_pseudo_probs[range(pred_not_in_pseudo_mask.sum()), -1] += factor
+            pred_not_in_pseudo_probs[range(pred_not_in_pseudo_mask.sum()), pred_classes[pred_not_in_pseudo_mask]] += 1 - factor
+            pred_not_in_pseudo_probs[range(pred_not_in_pseudo_mask.sum()), -1] += factor
             # valid_mask = torch.logical_or(~major_mask, match_quality_matrix.max(dim=1).values > 0.5)
             # if (valid_mask == False).any():
             #     print(f"Removing {(valid_mask==False).sum()} pseudo labels {pseudo_classes[valid_mask==False]}")
@@ -890,3 +893,42 @@ class TATeacherTrainer(ATeacherTrainer):
             #     torch.save(merged_pseudo_labels, "merged_pseudo_labels.pt")
             #     breakpoint()
         return merged_pseudo_labels
+
+    def resize(self, data):
+        data = copy.deepcopy(data)
+        bs = len(data)
+        for i in range(bs):
+            img = data[i]["image"]
+            h, w = img.shape[-2], img.shape[-1]
+            ratio = random.uniform(0.5, 1.0)
+            d_h, d_w = int(h * ratio), int(w * ratio)
+            x1 = int((w - d_w) / 2)
+            y1 = int((h - d_h) / 2)
+            bg = torch.zeros_like(img)
+            try:
+                bg += self.model.pixel_mean.cpu().int()
+            except:
+                bg += self.model.module.pixel_mean.cpu().int()
+            bg[:, y1 : y1 + d_h, x1 : x1 + d_w] = F.interpolate(
+                img.unsqueeze(0).float(),
+                size=(d_h, d_w),
+                align_corners=False,
+                mode="bilinear",
+            ).squeeze(0)
+            data[i]["image"] = bg
+            if data[i]["instances"].has("gt_boxes"):
+                data[i]["instances"].gt_boxes.tensor *= ratio
+                data[i]["instances"].gt_boxes.tensor[:, 0] += x1
+                data[i]["instances"].gt_boxes.tensor[:, 2] += x1
+                data[i]["instances"].gt_boxes.tensor[:, 1] += y1
+                data[i]["instances"].gt_boxes.tensor[:, 3] += y1
+                data[i]["instances"].gt_boxes.tensor = data[i][
+                    "instances"
+                ].gt_boxes.tensor
+                data[i]["instances"].gt_classes = data[i]["instances"].gt_classes
+                if "scores" in data[i]["instances"]._fields:
+                    data[i]["instances"].scores = data[i]["instances"].scores
+
+            if data[i]["instances"].has("pseudo_boxes"):
+                raise NotImplemented
+        return data
