@@ -750,7 +750,7 @@ class TATeacherTrainer(ATeacherTrainer):
 
 
             #  6. input strongly augmented unlabeled data into model
-            all_unlabel_data = torch.cat([unlabel_data_q, unlabel_data_q], dim=0)
+            all_unlabel_data = unlabel_data_q + unlabel_data_q
             if pertubation is not None:
                 pertubation = torch.cat([torch.zeros_like(pertubation), pertubation], dim=0)
             record_all_unlabel_data, _, _ = self.model(
