@@ -674,7 +674,6 @@ class TATeacherTrainer(ATeacherTrainer):
             #  0. remove unlabeled data labels
             # torch.save(unlabel_data_k, 'unlabel_data_k_gt.pt')
             unlabel_data_q = self.remove_label(unlabel_data_q)
-            unlabel_data_q = self.add_noise(unlabel_data_q)
             unlabel_data_k = self.remove_label(unlabel_data_k)
             self.update_attack_mask()
             # pertubation = None
@@ -745,6 +744,7 @@ class TATeacherTrainer(ATeacherTrainer):
             unlabel_data_q = self.add_label(
                 unlabel_data_q, merged_pseudo_proposals
             )
+
             # unlabel_data_q = self.resize(unlabel_data_q)
             # if unlabel_pertubation.any():
             #     breakpoint()
@@ -895,14 +895,41 @@ class TATeacherTrainer(ATeacherTrainer):
             #     breakpoint()
         return merged_pseudo_labels
 
-    def add_noise(self, data):
+    def resize(self, data):
+        data = copy.deepcopy(data)
         bs = len(data)
         for i in range(bs):
             img = data[i]["image"]
-            img_c, h, w = img.shape[-3], img.shape[-2], img.shape[-1]
-            keep_ratio = random.uniform(0.7, 1.0)
-            # print(keep_ratio)
-            noise = torch.rand([img_c, h, w]) * 255
-            data[i]["image"] = (img * keep_ratio + noise * (1 - keep_ratio)).to(torch.uint8)
+            h, w = img.shape[-2], img.shape[-1]
+            ratio = random.uniform(0.5, 1.0)
+            d_h, d_w = int(h * ratio), int(w * ratio)
+            x1 = int((w - d_w) / 2)
+            y1 = int((h - d_h) / 2)
+            bg = torch.zeros_like(img)
+            try:
+                bg += self.model.pixel_mean.cpu().int()
+            except:
+                bg += self.model.module.pixel_mean.cpu().int()
+            bg[:, y1 : y1 + d_h, x1 : x1 + d_w] = F.interpolate(
+                img.unsqueeze(0).float(),
+                size=(d_h, d_w),
+                align_corners=False,
+                mode="bilinear",
+            ).squeeze(0)
+            data[i]["image"] = bg
+            if data[i]["instances"].has("gt_boxes"):
+                data[i]["instances"].gt_boxes.tensor *= ratio
+                data[i]["instances"].gt_boxes.tensor[:, 0] += x1
+                data[i]["instances"].gt_boxes.tensor[:, 2] += x1
+                data[i]["instances"].gt_boxes.tensor[:, 1] += y1
+                data[i]["instances"].gt_boxes.tensor[:, 3] += y1
+                data[i]["instances"].gt_boxes.tensor = data[i][
+                    "instances"
+                ].gt_boxes.tensor
+                data[i]["instances"].gt_classes = data[i]["instances"].gt_classes
+                if "scores" in data[i]["instances"]._fields:
+                    data[i]["instances"].scores = data[i]["instances"].scores
 
+            if data[i]["instances"].has("pseudo_boxes"):
+                raise NotImplemented
         return data
