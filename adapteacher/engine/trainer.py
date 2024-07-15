@@ -871,7 +871,7 @@ class TATeacherTrainer(ATeacherTrainer):
             # if iou smaller than 0.5, use pseudo label class
             attacked_classes_for_pseudo_labels[ious < 0.5] = pseudo_classes[ious < 0.5]
             # if attacked class is more minor than pseudo label class, use a soft label (factor * major, (1-factor) * minor)
-            attack_mask=torch.logical_and(pseudo_classes!=attacked_classes_for_pseudo_labels, self.attack_mask[attacked_classes_for_pseudo_labels])
+            attack_mask=torch.logical_and(~self.attack_mask[pseudo_classes], self.attack_mask[attacked_classes_for_pseudo_labels])
             pseudo_classes[attack_mask] = attacked_classes_for_pseudo_labels[attack_mask]
             pseudo_probs[attack_mask] *= factor
             pseudo_probs[attack_mask, attacked_classes_for_pseudo_labels[attack_mask]] += 1-factor
