@@ -673,8 +673,8 @@ class TATeacherTrainer(ATeacherTrainer):
 
             #  0. remove unlabeled data labels
             # torch.save(unlabel_data_k, 'unlabel_data_k_gt.pt')
-            unlabel_data_q = self.remove_label(unlabel_data_q)
-            unlabel_data_k = self.remove_label(unlabel_data_k)
+            # unlabel_data_q = self.remove_label(unlabel_data_q)
+            # unlabel_data_k = self.remove_label(unlabel_data_k)
             self.update_attack_mask()
             # pertubation = None
             # for i in range(5):
@@ -697,53 +697,53 @@ class TATeacherTrainer(ATeacherTrainer):
             # Sum local matrix across all GPUs
             # self.update_mean_objectness(local_objectness)
             self.update_confusion_matrix(local_matrix)
-            #  3. generate the pseudo-label using teacher model
-            with torch.no_grad():
-                proposals_roih_unsup_k, _, _ = self.model_teacher(unlabel_data_k, branch="unsup_data_weak")
+            # #  3. generate the pseudo-label using teacher model
+            # with torch.no_grad():
+            #     proposals_roih_unsup_k, _, _ = self.model_teacher(unlabel_data_k, branch="unsup_data_weak")
 
-            #  4. Pseudo-labeling
-            cur_threshold = self.cfg.SEMISUPNET.BBOX_THRESHOLD
+            # #  4. Pseudo-labeling
+            # cur_threshold = self.cfg.SEMISUPNET.BBOX_THRESHOLD
 
-            pseudo_proposals_roih_unsup_k, _ = self.process_pseudo_label(
-                proposals_roih_unsup_k, cur_threshold, "roih", "thresholding"
-            )
-
-            unlabel_data_k = self.add_label(
-                unlabel_data_k, pseudo_proposals_roih_unsup_k
-            )
-
-            # unlabel_data_q = self.add_label(
-            #     unlabel_data_q, pseudo_proposals_roih_unsup_k
+            # pseudo_proposals_roih_unsup_k, _ = self.process_pseudo_label(
+            #     proposals_roih_unsup_k, cur_threshold, "roih", "thresholding"
             # )
 
-            #  5. conduct targeted attack on unlabel_data_q
-            pertubation = None
-            for i in range(1):
-                # print("unlabel " + str(i) + "th attack")
-                # print("Teacher:")
-                pertubation_teacher, _, _ = self.model_teacher(unlabel_data_k, branch="attack",pertubation=pertubation)
-                # print("Student:")
-                # pertubation_student, _, _ = self.model(unlabel_data_q, branch="attack",pertubation=pertubation)
-                step_pertubation = self.cfg.SEMISUPNET.ATTACK_SEVERITY * (pertubation_teacher)
-                pertubation = step_pertubation if pertubation is None else pertubation + step_pertubation
+            # unlabel_data_k = self.add_label(
+            #     unlabel_data_k, pseudo_proposals_roih_unsup_k
+            # )
+
+            # # unlabel_data_q = self.add_label(
+            # #     unlabel_data_q, pseudo_proposals_roih_unsup_k
+            # # )
+
+            # #  5. conduct targeted attack on unlabel_data_q
+            # pertubation = None
+            # for i in range(1):
+            #     # print("unlabel " + str(i) + "th attack")
+            #     # print("Teacher:")
+            #     pertubation_teacher, _, _ = self.model_teacher(unlabel_data_k, branch="attack",pertubation=pertubation)
+            #     # print("Student:")
+            #     # pertubation_student, _, _ = self.model(unlabel_data_q, branch="attack",pertubation=pertubation)
+            #     step_pertubation = self.cfg.SEMISUPNET.ATTACK_SEVERITY * (pertubation_teacher)
+            #     pertubation = step_pertubation if pertubation is None else pertubation + step_pertubation
                 
-            # torch.save(unlabel_data_k, 'unlabel_data_k_pseudo.pt')
-            # _, _, _ = self.model_teacher(unlabel_data_k, branch="attack", attack_mask = self.attack_mask, pertubation=pertubation)
+            # # torch.save(unlabel_data_k, 'unlabel_data_k_pseudo.pt')
+            # # _, _, _ = self.model_teacher(unlabel_data_k, branch="attack", attack_mask = self.attack_mask, pertubation=pertubation)
 
-            if pertubation is not None:
-                with torch.no_grad():
-                    proposals_roih_attacked_k, _, _ = self.model_teacher(unlabel_data_k, branch="unsup_data_weak", pertubation=pertubation)
+            # if pertubation is not None:
+            #     with torch.no_grad():
+            #         proposals_roih_attacked_k, _, _ = self.model_teacher(unlabel_data_k, branch="unsup_data_weak", pertubation=pertubation)
 
-                pseudo_proposals_roih_attacked_k, _ = self.process_pseudo_label(
-                    proposals_roih_attacked_k, cur_threshold, "roih", "thresholding"
-                )
-                merged_pseudo_proposals = self.merge_pseudo_labels(pseudo_proposals_roih_unsup_k, pseudo_proposals_roih_attacked_k)
-            else:
-                merged_pseudo_proposals = pseudo_proposals_roih_unsup_k
+            #     pseudo_proposals_roih_attacked_k, _ = self.process_pseudo_label(
+            #         proposals_roih_attacked_k, cur_threshold, "roih", "thresholding"
+            #     )
+            #     merged_pseudo_proposals = self.merge_pseudo_labels(pseudo_proposals_roih_unsup_k, pseudo_proposals_roih_attacked_k)
+            # else:
+            #     merged_pseudo_proposals = pseudo_proposals_roih_unsup_k
 
-            unlabel_data_q = self.add_label(
-                unlabel_data_q, merged_pseudo_proposals
-            )
+            # unlabel_data_q = self.add_label(
+            #     unlabel_data_q, merged_pseudo_proposals
+            # )
 
             # unlabel_data_q = self.resize(unlabel_data_q)
             # if unlabel_pertubation.any():
