@@ -845,7 +845,8 @@ class TATeacherTrainer(ATeacherTrainer):
             )
     
     def update_attack_mask(self):
-        self.attack_mask = (self.imbalance_metric.roi.diag() < self.imbalance_metric.roi.diag().mean()).cuda()
+        class_diff = self.imbalance_metric.roi[:,:-1] - self.imbalance_metric.roi[:,:-1].T
+        self.attack_mask = (class_diff > 0).cuda()
      
     def merge_pseudo_labels(self, pseudo_labels, attacked_predictions, factor=0.5):
         merged_pseudo_labels = []
@@ -871,10 +872,10 @@ class TATeacherTrainer(ATeacherTrainer):
             # if iou smaller than 0.5, use pseudo label class
             attacked_classes_for_pseudo_labels[ious < 0.5] = pseudo_classes[ious < 0.5]
             # if attacked class is more minor than pseudo label class, use a soft label (factor * major, (1-factor) * minor)
-            attack_mask=torch.logical_and(~self.attack_mask[pseudo_classes], self.attack_mask[attacked_classes_for_pseudo_labels])
+            attack_mask = self.attack_mask[attacked_classes_for_pseudo_labels, pseudo_classes]
             pseudo_classes[attack_mask] = attacked_classes_for_pseudo_labels[attack_mask]
             pseudo_probs[attack_mask] *= factor
-            pseudo_probs[attack_mask, attacked_classes_for_pseudo_labels[attack_mask]] += 1-factor
+            pseudo_probs[attack_mask, attacked_classes_for_pseudo_labels[attack_mask]] += 1 - factor
             # if an attacked prediction is not used to match any pseudo label, add it to pseudo labels with a soft label (factor *  back, (1-factor) * obj)
             pred_not_in_pseudo_mask = torch.ones_like(pred_classes, dtype=torch.bool)
             pred_not_in_pseudo_mask[indices[ious>=0.5].unique()] = False
