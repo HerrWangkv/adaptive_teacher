@@ -717,15 +717,11 @@ class TATeacherTrainer(ATeacherTrainer):
             # # )
 
             # #  5. conduct targeted attack on unlabel_data_q
-            # pertubation = None
-            # for i in range(1):
-            #     # print("unlabel " + str(i) + "th attack")
-            #     # print("Teacher:")
-            #     pertubation_teacher, _, _ = self.model_teacher(unlabel_data_k, branch="attack",pertubation=pertubation)
-            #     # print("Student:")
-            #     # pertubation_student, _, _ = self.model(unlabel_data_q, branch="attack",pertubation=pertubation)
-            #     step_pertubation = self.cfg.SEMISUPNET.ATTACK_SEVERITY * (pertubation_teacher)
-            #     pertubation = step_pertubation if pertubation is None else pertubation + step_pertubation
+            pertubation = None
+            for i in range(1):
+                step_pertubation, _, _ = self.model(unlabel_data_q, branch="attack",pertubation=pertubation)
+                step_pertubation *= self.cfg.SEMISUPNET.ATTACK_SEVERITY
+                pertubation = step_pertubation if pertubation is None else pertubation + step_pertubation
                 
             # # torch.save(unlabel_data_k, 'unlabel_data_k_pseudo.pt')
             # # _, _, _ = self.model_teacher(unlabel_data_k, branch="attack", attack_mask = self.attack_mask, pertubation=pertubation)
@@ -751,8 +747,11 @@ class TATeacherTrainer(ATeacherTrainer):
 
 
             #  6. input strongly augmented unlabeled data into model
+            all_unlabel_data = unlabel_data_q + unlabel_data_q
+            if pertubation is not None:
+                pertubation = torch.cat([torch.zeros_like(pertubation), pertubation], dim=0)
             record_all_unlabel_data, _, _ = self.model(
-                unlabel_data_q, branch="supervised_target"
+                all_unlabel_data, branch="supervised_target", pertubation=pertubation
             )
             new_record_all_unlabel_data = {}
             for key in record_all_unlabel_data.keys():
