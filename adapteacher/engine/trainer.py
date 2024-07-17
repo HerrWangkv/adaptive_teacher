@@ -653,9 +653,9 @@ class TATeacherTrainer(ATeacherTrainer):
         ) % self.cfg.SEMISUPNET.TEACHER_UPDATE_ITER == 0:
             self._update_teacher_model(keep_rate=self.cfg.SEMISUPNET.EMA_KEEP_RATE)
 
+        label_data_q = self.remove_cutout_objects(label_data_k, label_data_q)
         if self.iter < self.cfg.SEMISUPNET.BURN_UP_STEP:
 
-            label_data_q = self.remove_cutout_objects(label_data_k, label_data_q)
             # input both strong and weak supervised data into model
             label_data_q.extend(label_data_k)
             record_dict, local_objectness, local_matrix = self.model(label_data_q, branch="supervised", ret_mean_objectness=True, ret_confusion_matrix=True)
