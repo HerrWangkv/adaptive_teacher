@@ -719,7 +719,7 @@ class TATeacherTrainer(ATeacherTrainer):
             #  5. conduct targeted attack on unlabel_data_q
             pertubation_k = None
             for i in range(1):
-                step_pertubation, _, _ = self.model_teacher(unlabel_data_k, branch="attack",pertubation=pertubation_k)
+                step_pertubation, _, _ = self.model_teacher(unlabel_data_k, branch="attack",pertubation=pertubation_k, attack_mask=~self.attack_mask)
                 step_pertubation *= self.cfg.SEMISUPNET.ATTACK_SEVERITY
                 pertubation_k = step_pertubation if pertubation_k is None else pertubation_k + step_pertubation
                 
@@ -875,33 +875,23 @@ class TATeacherTrainer(ATeacherTrainer):
                         highest_iou_pos = positions[ious[positions].argmax()]
                         positions = positions[positions!=highest_iou_pos]
                         indices[positions] = -1
-            indices[ious < 0.5] = -1       
-            # if not matched, use pseudo classes
+            indices[ious < 0.8] = -1       
             attacked_classes_for_pseudo_labels = pseudo_classes.clone()
-            # if matched, use predicted class
+            # if matched, set attacked class as predicted class
             attacked_classes_for_pseudo_labels[indices >= 0] = pred_classes[indices[indices>=0]]
-            # if attacked class is more minor than pseudo label class, use a soft label (factor * major, (1-factor) * minor)
+            # if attacked class is a minor class and pseudo label class is a major class, use a soft label (factor * major, (1-factor) * minor)
             attack_mask=torch.logical_and(~self.attack_mask[pseudo_classes], self.attack_mask[attacked_classes_for_pseudo_labels])
-            pseudo_classes[attack_mask] = attacked_classes_for_pseudo_labels[attack_mask]
-            # pseudo_classes[indices == -1] = self.num_classes
+            attacked_classes_for_pseudo_labels[~attack_mask] = pseudo_classes[~attack_mask]
             pseudo_probs[attack_mask] *= factor
             pseudo_probs[attack_mask, attacked_classes_for_pseudo_labels[attack_mask]] += 1-factor
-            # if an attacked prediction is not used to match any pseudo label, add it to pseudo labels with a soft label (factor *  back, (1-factor) * obj)
-            pred_not_in_pseudo_mask = torch.ones_like(pred_classes, dtype=torch.bool)
-            pred_not_in_pseudo_mask[indices[indices>=0].unique()] = False
-            pred_not_in_pseudo_probs = torch.zeros([pred_not_in_pseudo_mask.sum(), self.num_classes + 1], device=pseudo_probs.device)
-            pred_not_in_pseudo_probs[range(pred_not_in_pseudo_mask.sum()), pred_classes[pred_not_in_pseudo_mask]] += 1 - factor
-            pred_not_in_pseudo_probs[range(pred_not_in_pseudo_mask.sum()), -1] += factor
-            # valid_mask = torch.logical_or(~major_mask, match_quality_matrix.max(dim=1).values > 0.5)
-            # if (valid_mask == False).any():
-            #     print(f"Removing {(valid_mask==False).sum()} pseudo labels {pseudo_classes[valid_mask==False]}")
-            new_proposal_inst.gt_boxes = Boxes(torch.cat([pseudo_boxes.tensor, pred_boxes[pred_not_in_pseudo_mask].tensor], dim=0))#[valid_mask]
-            new_proposal_inst.gt_classes = torch.cat([pseudo_classes, pred_classes[pred_not_in_pseudo_mask]])#[valid_mask]
-            new_proposal_inst.gt_probs = torch.cat([pseudo_probs, pred_not_in_pseudo_probs], dim=0)#[valid_mask]
+
+            new_proposal_inst.gt_boxes = pseudo_boxes
+            new_proposal_inst.gt_classes = attacked_classes_for_pseudo_labels
+            new_proposal_inst.gt_probs = pseudo_probs
             merged_pseudo_labels.append(new_proposal_inst)
-            # if attack_mask.any() or self.attack_mask[pred_classes[pred_not_in_pseudo_mask]].any():
-            #     print(pseudo_classes[attack_mask])
-            #     print(pred_classes[pred_not_in_pseudo_mask])
+            # if (attacked_classes_for_pseudo_labels[attack_mask]!=self.num_classes).any() or self.attack_mask[pred_classes[pred_not_in_pseudo_mask]].any():
+            # if (attack_mask).any():
+            #     print(attacked_classes_for_pseudo_labels[attack_mask])
             #     torch.save(merged_pseudo_labels, "merged_pseudo_labels.pt")
             #     breakpoint()
         return merged_pseudo_labels
