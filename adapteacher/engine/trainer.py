@@ -655,6 +655,7 @@ class TATeacherTrainer(ATeacherTrainer):
 
         if self.iter < self.cfg.SEMISUPNET.BURN_UP_STEP:
 
+            label_data_q = self.remove_cutout_objects(label_data_k, label_data_q)
             # input both strong and weak supervised data into model
             label_data_q.extend(label_data_k)
             record_dict, local_objectness, local_matrix = self.model(label_data_q, branch="supervised", ret_mean_objectness=True, ret_confusion_matrix=True)
@@ -712,36 +713,38 @@ class TATeacherTrainer(ATeacherTrainer):
                 unlabel_data_k, pseudo_proposals_roih_unsup_k
             )
 
-            # unlabel_data_q = self.add_label(
-            #     unlabel_data_q, pseudo_proposals_roih_unsup_k
-            # )
-
-            #  5. conduct targeted attack on unlabel_data_q
-            pertubation_k = None
-            for i in range(1):
-                step_pertubation, _, _ = self.model_teacher(unlabel_data_k, branch="attack",pertubation=pertubation_k, attack_mask=~self.attack_mask)
-                step_pertubation *= self.cfg.SEMISUPNET.ATTACK_SEVERITY
-                pertubation_k = step_pertubation if pertubation_k is None else pertubation_k + step_pertubation
-                
-            # torch.save(unlabel_data_k, 'unlabel_data_k_pseudo.pt')
-            # _, _, _ = self.model_teacher(unlabel_data_k, branch="attack", attack_mask = self.attack_mask, pertubation=pertubation)
-
-            if pertubation_k is not None:
-                with torch.no_grad():
-                    proposals_roih_attacked_k, _, _ = self.model_teacher(unlabel_data_k, branch="unsup_data_weak", pertubation=pertubation_k)
-
-                pseudo_proposals_roih_attacked_k, _ = self.process_pseudo_label(
-                    proposals_roih_attacked_k, cur_threshold, "roih", "thresholding"
-                )
-                merged_pseudo_proposals = self.merge_pseudo_labels(pseudo_proposals_roih_unsup_k, pseudo_proposals_roih_attacked_k)
-            else:
-                merged_pseudo_proposals = pseudo_proposals_roih_unsup_k
-
             unlabel_data_q = self.add_label(
-                unlabel_data_q, merged_pseudo_proposals
+                unlabel_data_q, pseudo_proposals_roih_unsup_k
             )
 
+            #  5. conduct targeted attack on unlabel_data_q
+            # pertubation_k = None
+            # for i in range(1):
+            #     step_pertubation, _, _ = self.model_teacher(unlabel_data_k, branch="attack",pertubation=pertubation_k, attack_mask=~self.attack_mask)
+            #     step_pertubation *= self.cfg.SEMISUPNET.ATTACK_SEVERITY
+            #     pertubation_k = step_pertubation if pertubation_k is None else pertubation_k + step_pertubation
+                
+            # # torch.save(unlabel_data_k, 'unlabel_data_k_pseudo.pt')
+            # # _, _, _ = self.model_teacher(unlabel_data_k, branch="attack", attack_mask = self.attack_mask, pertubation=pertubation)
+
+            # if pertubation_k is not None:
+            #     with torch.no_grad():
+            #         proposals_roih_attacked_k, _, _ = self.model_teacher(unlabel_data_k, branch="unsup_data_weak", pertubation=pertubation_k)
+
+            #     pseudo_proposals_roih_attacked_k, _ = self.process_pseudo_label(
+            #         proposals_roih_attacked_k, cur_threshold, "roih", "thresholding"
+            #     )
+            #     merged_pseudo_proposals = self.merge_pseudo_labels(pseudo_proposals_roih_unsup_k, pseudo_proposals_roih_attacked_k)
+            # else:
+            #     merged_pseudo_proposals = pseudo_proposals_roih_unsup_k
+
+            # unlabel_data_q = self.add_label(
+            #     unlabel_data_q, merged_pseudo_proposals
+            # )
+            unlabel_data_q = self.remove_cutout_objects(unlabel_data_k, unlabel_data_q)
+
             # unlabel_data_q = self.cutout(unlabel_data_q)
+            # torch.save(unlabel_data_k, 'unlabel_data_k.pt')
             # torch.save(unlabel_data_q, 'unlabel_data_q.pt')
             # breakpoint()
             # if unlabel_pertubation.any():
@@ -896,68 +899,27 @@ class TATeacherTrainer(ATeacherTrainer):
             #     breakpoint()
         return merged_pseudo_labels
 
-    def resize(self, data):
-        data = copy.deepcopy(data)
-        bs = len(data)
-        for i in range(bs):
-            img = data[i]["image"]
-            h, w = img.shape[-2], img.shape[-1]
-            ratio = random.uniform(0.5, 1.0)
-            d_h, d_w = int(h * ratio), int(w * ratio)
-            x1 = int((w - d_w) / 2)
-            y1 = int((h - d_h) / 2)
-            bg = torch.zeros_like(img)
-            try:
-                bg += self.model.pixel_mean.cpu().int()
-            except:
-                bg += self.model.module.pixel_mean.cpu().int()
-            bg[:, y1 : y1 + d_h, x1 : x1 + d_w] = F.interpolate(
-                img.unsqueeze(0).float(),
-                size=(d_h, d_w),
-                align_corners=False,
-                mode="bilinear",
-            ).squeeze(0)
-            data[i]["image"] = bg
-            if data[i]["instances"].has("gt_boxes"):
-                data[i]["instances"].gt_boxes.tensor *= ratio
-                data[i]["instances"].gt_boxes.tensor[:, 0] += x1
-                data[i]["instances"].gt_boxes.tensor[:, 2] += x1
-                data[i]["instances"].gt_boxes.tensor[:, 1] += y1
-                data[i]["instances"].gt_boxes.tensor[:, 3] += y1
-                data[i]["instances"].gt_boxes.tensor = data[i][
-                    "instances"
-                ].gt_boxes.tensor
-                data[i]["instances"].gt_classes = data[i]["instances"].gt_classes
-                if "scores" in data[i]["instances"]._fields:
-                    data[i]["instances"].scores = data[i]["instances"].scores
-
-            if data[i]["instances"].has("pseudo_boxes"):
-                raise NotImplemented
-        return data
-    
-    def cutout(self, data, p=0.2):
-        bs = len(data)
-        for i in range(bs):
-            img = data[i]["image"]
-            h, w = img.shape[-2], img.shape[-1]
-            cutout_mask = torch.zeros((h, w), dtype=torch.bool)
-            for bbox in data[i]["instances"].gt_boxes.tensor:
-                x1, y1, x2, y2 = bbox.cpu().int()
-                cutout_mask[y1:y2, x1:x2] = True
-           # Flatten the mask
-            flat_mask = cutout_mask.flatten()
-            # Get indices of True values
-            true_indices = torch.where(flat_mask)[0]
-            # Shuffle indices
-            shuffled_indices = true_indices[torch.randperm(len(true_indices))]
-            # Calculate the number of True values to set to False based on p
-            num_to_false = int(len(shuffled_indices) * p)
-            # Select p percent of the True indices to set to False
-            selected_indices = shuffled_indices[num_to_false:]
-            # Set selected indices to False
-            flat_mask[selected_indices] = False
-            # Reshape the mask back to its original shape
-            cutout_mask = flat_mask.view(h, w)
-            img[:, cutout_mask] = torch.randint(0, 256, size=(3, cutout_mask.sum())).to(torch.uint8)
-            data[i]["image"] = img
-        return data
+    def remove_cutout_objects(self, data_k, data_q):
+        for image_index in range(len(data_k)):
+            boxes = data_k[image_index]['instances'].gt_boxes.tensor
+        if len(boxes):
+            valid_mask = torch.ones(len(boxes), dtype=torch.bool)
+            for i in range(boxes.shape[0]):
+                box_i = boxes[i].to(torch.int)
+                x1 = box_i[0]
+                y1 = box_i[1]
+                x2 = box_i[2]
+                y2 = box_i[3]
+                image_q_patch = data_q[image_index]['image'][:, y1:y2, x1:x2].to(torch.float)
+                image_k_patch = data_k[image_index]['image'][:, y1:y2, x1:x2].to(torch.float)
+                diff = (image_q_patch - image_k_patch).absolute().flatten()
+                ratio = (diff > 40).sum() / diff.numel()
+                if ratio > 0.5:
+                    valid_mask[i] = False
+            new_instance = Instances(data_q[image_index]['image'].shape[-2:])
+            new_instance.gt_boxes = Boxes(boxes[valid_mask])
+            new_instance.gt_classes = data_q[image_index]['instances'].gt_classes[valid_mask]
+            if 'gt_probs' in data_q[image_index]['instances']._fields:
+                new_instance.gt_probs = data_q[image_index]['instances'].gt_probs[valid_mask]
+            data_q[image_index]['instances'] = new_instance
+        return data_q
