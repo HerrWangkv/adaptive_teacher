@@ -672,7 +672,7 @@ class TATeacherTrainer(ATeacherTrainer):
             record_dict = {}
 
             #  0. remove unlabeled data labels
-            torch.save(unlabel_data_k, 'unlabel_data_k_gt.pt')
+            # torch.save(unlabel_data_k, 'unlabel_data_k_gt.pt')
             unlabel_data_q = self.remove_label(unlabel_data_q)
             unlabel_data_k = self.remove_label(unlabel_data_k)
             self.update_attack_mask()
@@ -717,22 +717,18 @@ class TATeacherTrainer(ATeacherTrainer):
             # )
 
             #  5. conduct targeted attack on unlabel_data_q
-            pertubation = None
+            pertubation_k = None
             for i in range(1):
-                # print("unlabel " + str(i) + "th attack")
-                # print("Teacher:")
-                pertubation_teacher, _, _ = self.model_teacher(unlabel_data_k, branch="attack",pertubation=pertubation)
-                # print("Student:")
-                # pertubation_student, _, _ = self.model(unlabel_data_q, branch="attack",pertubation=pertubation)
-                step_pertubation = self.cfg.SEMISUPNET.ATTACK_SEVERITY * (pertubation_teacher)
-                pertubation = step_pertubation if pertubation is None else pertubation + step_pertubation
+                step_pertubation, _, _ = self.model_teacher(unlabel_data_k, branch="attack",pertubation=pertubation_k)
+                step_pertubation *= self.cfg.SEMISUPNET.ATTACK_SEVERITY
+                pertubation_k = step_pertubation if pertubation_k is None else pertubation_k + step_pertubation
                 
-            torch.save(unlabel_data_k, 'unlabel_data_k_pseudo.pt')
+            # torch.save(unlabel_data_k, 'unlabel_data_k_pseudo.pt')
             # _, _, _ = self.model_teacher(unlabel_data_k, branch="attack", attack_mask = self.attack_mask, pertubation=pertubation)
 
-            if pertubation is not None:
+            if pertubation_k is not None:
                 with torch.no_grad():
-                    proposals_roih_attacked_k, _, _ = self.model_teacher(unlabel_data_k, branch="unsup_data_weak", pertubation=pertubation)
+                    proposals_roih_attacked_k, _, _ = self.model_teacher(unlabel_data_k, branch="unsup_data_weak", pertubation=pertubation_k)
 
                 pseudo_proposals_roih_attacked_k, _ = self.process_pseudo_label(
                     proposals_roih_attacked_k, cur_threshold, "roih", "thresholding"
@@ -745,7 +741,9 @@ class TATeacherTrainer(ATeacherTrainer):
                 unlabel_data_q, merged_pseudo_proposals
             )
 
-            # unlabel_data_q = self.resize(unlabel_data_q)
+            unlabel_data_q = self.cutout(unlabel_data_q)
+            # torch.save(unlabel_data_q, 'unlabel_data_q.pt')
+            # breakpoint()
             # if unlabel_pertubation.any():
             #     breakpoint()
 
@@ -892,8 +890,8 @@ class TATeacherTrainer(ATeacherTrainer):
             pred_not_in_pseudo_mask = torch.ones_like(pred_classes, dtype=torch.bool)
             pred_not_in_pseudo_mask[indices[indices>=0].unique()] = False
             pred_not_in_pseudo_probs = torch.zeros([pred_not_in_pseudo_mask.sum(), self.num_classes + 1], device=pseudo_probs.device)
-            pred_not_in_pseudo_probs[range(pred_not_in_pseudo_mask.sum()), pred_classes[pred_not_in_pseudo_mask]] += 1 - factor
-            pred_not_in_pseudo_probs[range(pred_not_in_pseudo_mask.sum()), -1] += factor
+            pred_not_in_pseudo_probs[range(pred_not_in_pseudo_mask.sum()), pred_classes[pred_not_in_pseudo_mask]] += 1# - factor
+            # pred_not_in_pseudo_probs[range(pred_not_in_pseudo_mask.sum()), -1] += factor
             # valid_mask = torch.logical_or(~major_mask, match_quality_matrix.max(dim=1).values > 0.5)
             # if (valid_mask == False).any():
             #     print(f"Removing {(valid_mask==False).sum()} pseudo labels {pseudo_classes[valid_mask==False]}")
@@ -901,11 +899,11 @@ class TATeacherTrainer(ATeacherTrainer):
             new_proposal_inst.gt_classes = torch.cat([pseudo_classes, pred_classes[pred_not_in_pseudo_mask]])#[valid_mask]
             new_proposal_inst.gt_probs = torch.cat([pseudo_probs, pred_not_in_pseudo_probs], dim=0)#[valid_mask]
             merged_pseudo_labels.append(new_proposal_inst)
-            if attack_mask.any() or self.attack_mask[pred_classes[pred_not_in_pseudo_mask]].any():
-                print(pseudo_classes[attack_mask])
-                print(pred_classes[pred_not_in_pseudo_mask])
-                torch.save(merged_pseudo_labels, "merged_pseudo_labels.pt")
-                breakpoint()
+            # if attack_mask.any() or self.attack_mask[pred_classes[pred_not_in_pseudo_mask]].any():
+                # print(pseudo_classes[attack_mask])
+                # print(pred_classes[pred_not_in_pseudo_mask])
+                # torch.save(merged_pseudo_labels, "merged_pseudo_labels.pt")
+                # breakpoint()
         return merged_pseudo_labels
 
     def resize(self, data):
@@ -945,4 +943,31 @@ class TATeacherTrainer(ATeacherTrainer):
 
             if data[i]["instances"].has("pseudo_boxes"):
                 raise NotImplemented
+        return data
+    
+    def cutout(self, data, p=0.2):
+        bs = len(data)
+        for i in range(bs):
+            img = data[i]["image"]
+            h, w = img.shape[-2], img.shape[-1]
+            cutout_mask = torch.zeros((h, w), dtype=torch.bool)
+            for bbox in data[i]["instances"].gt_boxes.tensor:
+                x1, y1, x2, y2 = bbox.cpu().int()
+                cutout_mask[y1:y2, x1:x2] = True
+           # Flatten the mask
+            flat_mask = cutout_mask.flatten()
+            # Get indices of True values
+            true_indices = torch.where(flat_mask)[0]
+            # Shuffle indices
+            shuffled_indices = true_indices[torch.randperm(len(true_indices))]
+            # Calculate the number of True values to set to False based on p
+            num_to_false = int(len(shuffled_indices) * p)
+            # Select p percent of the True indices to set to False
+            selected_indices = shuffled_indices[num_to_false:]
+            # Set selected indices to False
+            flat_mask[selected_indices] = False
+            # Reshape the mask back to its original shape
+            cutout_mask = flat_mask.view(h, w)
+            img[:, cutout_mask] = torch.randint(0, 256, size=(3, cutout_mask.sum())).to(torch.uint8)
+            data[i]["image"] = img
         return data
