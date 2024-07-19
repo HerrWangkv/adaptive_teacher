@@ -18,6 +18,7 @@ from detectron2.engine import DefaultTrainer, SimpleTrainer, TrainerBase
 from detectron2.engine.train_loop import AMPTrainer
 from detectron2.utils.events import EventStorage
 from detectron2.evaluation import verify_results, DatasetEvaluators
+from detectron2.layers import cat, cross_entropy, nonzero_tuple, batched_nms
 
 # from detectron2.evaluation import COCOEvaluator, verify_results, DatasetEvaluators
 
@@ -719,26 +720,24 @@ class TATeacherTrainer(ATeacherTrainer):
 
             #  5. conduct targeted attack on unlabel_data_q
             # torch.save(unlabel_data_k, "unlabel_data_k_pseudo.pt")
-            pertubation_k = None
             merged_pseudo_proposals = pseudo_proposals_roih_unsup_k
-            for i in range(2):
-                step_pertubation, _, _ = self.model_teacher(unlabel_data_k, branch="attack",pertubation=pertubation_k)
+            for i in range(5):
+                step_pertubation, _, _ = self.model_teacher(unlabel_data_k, branch="attack")
                 step_pertubation *= self.cfg.SEMISUPNET.ATTACK_SEVERITY
-                pertubation_k = step_pertubation if pertubation_k is None else pertubation_k + step_pertubation
                 if step_pertubation.any():
                     unlabel_data_k = self.remove_label(unlabel_data_k)
                     with torch.no_grad():
-                        proposals_roih_attacked_k, _, _ = self.model_teacher(unlabel_data_k, branch="unsup_data_weak", pertubation=pertubation_k)
+                        proposals_roih_attacked_k, _, _ = self.model_teacher(unlabel_data_k, branch="unsup_data_weak", pertubation=step_pertubation)
                     pseudo_proposals_roih_attacked_k, _ = self.process_pseudo_label(
                         proposals_roih_attacked_k, cur_threshold, "roih", "thresholding"
                     )
-                    merged_pseudo_proposals = self.merge_pseudo_labels(merged_pseudo_proposals, pseudo_proposals_roih_attacked_k, keep_factor=0.8)
+                    merged_pseudo_proposals = self.merge_pseudo_labels(merged_pseudo_proposals, pseudo_proposals_roih_attacked_k, keep_factor=1 - 0.2 * 0.7 ** i)
                     unlabel_data_k = self.add_label(unlabel_data_k, merged_pseudo_proposals)
                     # torch.save(unlabel_data_k[0]["instances"], f"merged_pseudo_labels{i}.pt")
                     # print(i)
                 else:
                     break
-            # if 3 in unlabel_data_k[0]["instances"].gt_classes and "gt_probs" in unlabel_data_k[0]["instances"]._fields:
+            # if 5 in unlabel_data_k[0]["instances"].gt_classes and "gt_probs" in unlabel_data_k[0]["instances"]._fields:
             #     breakpoint()
                 
             # torch.save(unlabel_data_k, 'unlabel_data_k_pseudo.pt')
@@ -901,9 +900,15 @@ class TATeacherTrainer(ATeacherTrainer):
             pred_not_in_pseudo_probs = torch.zeros([pred_not_in_pseudo_mask.sum(), self.num_classes + 1], device=pseudo_probs.device)
             pred_not_in_pseudo_probs[range(pred_not_in_pseudo_mask.sum()), pred_classes[pred_not_in_pseudo_mask]] = 1 - keep_factor
             pred_not_in_pseudo_probs[range(pred_not_in_pseudo_mask.sum()), -1] = keep_factor
-            new_proposal_inst.gt_boxes = Boxes(torch.cat([pseudo_boxes.tensor, pred_boxes[pred_not_in_pseudo_mask].tensor], dim=0))#[valid_mask]
-            new_proposal_inst.gt_classes = torch.cat([pseudo_probs[:,:-1].argmax(dim=1), pred_classes[pred_not_in_pseudo_mask]])#[valid_mask]
-            new_proposal_inst.gt_probs = torch.cat([pseudo_probs, pred_not_in_pseudo_probs], dim=0)#[valid_mask]
+            pre_nms_boxes = torch.cat([pseudo_boxes.tensor, pred_boxes[pred_not_in_pseudo_mask].tensor], dim=0)
+            pre_nms_classes = torch.cat([pseudo_probs[:,:-1].argmax(dim=1), pred_classes[pred_not_in_pseudo_mask]])
+            pre_nms_probs = torch.cat([pseudo_probs, pred_not_in_pseudo_probs], dim=0)
+            keep = batched_nms(pre_nms_boxes, pre_nms_probs[range(len(pre_nms_probs)), pre_nms_classes], pre_nms_classes, self.cfg.MODEL.ROI_HEADS.NMS_THRESH_TEST)
+            new_proposal_inst.gt_boxes, new_proposal_inst.gt_probs, new_proposal_inst.gt_classes = (
+                Boxes(pre_nms_boxes[keep]),
+                pre_nms_probs[keep],
+                pre_nms_classes[keep],
+            )
             merged_pseudo_labels.append(new_proposal_inst)
             # if pred_not_in_pseudo_mask.any() or (pseudo_classes!=attacked_classes_for_pseudo_labels).any():
             #     for j in range(len(pseudo_classes)):
