@@ -69,11 +69,7 @@ class FgFastRCNNOutputLayers(FastRCNNOutputLayers):
                     # breakpoint()
                     loss_cls = cross_entropy(scores[mask], gt_classes[mask], reduction="mean")
             else:
-                if gt_probs is not None:
-                    loss_cls = torch.sum(-torch.log_softmax(scores, dim=1) * gt_probs, dim=1)
-                    loss_cls = torch.mean(loss_cls)
-                else:
-                    loss_cls = cross_entropy(scores, gt_classes, reduction="mean")
+                loss_cls = cross_entropy(scores, gt_classes, reduction="mean")
         else:
             assert attack_mask is None
             if gt_probs is not None:
