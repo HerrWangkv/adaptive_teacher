@@ -7,8 +7,6 @@ MODEL:
     NAME: "FgPseudoRPN"
   RPN:
     IN_FEATURES: ["vgg4"]
-  ROI_BOX_HEAD:
-    NAME: "FastRCNNConvFCHeadDropout"
   ROI_HEADS:
     NAME: "FgPseudoROIHeads"
     NUM_CLASSES: 8

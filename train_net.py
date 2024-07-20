@@ -14,7 +14,6 @@ from adapteacher.modeling.meta_arch.rcnn import DAobjTwoStagePseudoLabGeneralize
 from adapteacher.modeling.meta_arch.vgg import build_vgg_backbone  # noqa
 from adapteacher.modeling.proposal_generator.rpn import PseudoLabRPN
 from adapteacher.modeling.roi_heads.roi_heads import StandardROIHeadsPseudoLab
-from adapteacher.modeling.roi_heads.box_head import FastRCNNConvFCHeadDropout
 import adapteacher.data.datasets.builtin
 
 from adapteacher.modeling.meta_arch.ts_ensemble import EnsembleTSModel
