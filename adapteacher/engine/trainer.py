@@ -721,31 +721,31 @@ class TATeacherTrainer(ATeacherTrainer):
             #  5. conduct targeted attack on unlabel_data_q
             # torch.save(unlabel_data_k, "unlabel_data_k_pseudo.pt")
             merged_pseudo_proposals = pseudo_proposals_roih_unsup_k
-            pertubation_k = None
-            for i in range(1):
-                step_pertubation, _, _ = self.model_teacher(unlabel_data_k, branch="attack", pertubation = pertubation_k)
-                step_pertubation *= self.cfg.SEMISUPNET.ATTACK_SEVERITY
-                pertubation_k = step_pertubation if pertubation_k is None else pertubation_k + step_pertubation
-                if step_pertubation.any():
-                    with torch.no_grad():
-                        proposals_roih_attacked_k, _, _ = self.model_teacher(unlabel_data_k, branch="unsup_data_weak", pertubation=pertubation_k)
-                    # torch.save(proposals_roih_attacked_k, "attacked_pseudo_labels.pt")
-                    pseudo_proposals_roih_attacked_k, _ = self.process_pseudo_label(
-                        proposals_roih_attacked_k, cur_threshold, "roih", "thresholding"
-                    )
-                    merged_pseudo_proposals = self.merge_pseudo_labels(merged_pseudo_proposals, pseudo_proposals_roih_attacked_k, keep_factor= 0.8 + 0.1*i)
-                    # torch.save(merged_pseudo_proposals[0], f"merged_pseudo_labels{i}.pt")
-                    # print(i)
-                else:
-                    break
-            # if 3 in merged_pseudo_proposals[0].gt_classes and "gt_probs" in merged_pseudo_proposals[0]._fields:
-            # # if (unlabel_data_k[0]["instances"].gt_probs[:,:-1]==0.2).any():
-            # if (merged_pseudo_proposals[0].gt_probs==0.8).any():
-            #     print(torch.where(merged_pseudo_proposals[0].gt_probs==0.8))
-            #     breakpoint()
+            # pertubation_k = None
+            # for i in range(1):
+            #     step_pertubation, _, _ = self.model_teacher(unlabel_data_k, branch="attack", pertubation = pertubation_k)
+            #     step_pertubation *= self.cfg.SEMISUPNET.ATTACK_SEVERITY
+            #     pertubation_k = step_pertubation if pertubation_k is None else pertubation_k + step_pertubation
+            #     if step_pertubation.any():
+            #         with torch.no_grad():
+            #             proposals_roih_attacked_k, _, _ = self.model_teacher(unlabel_data_k, branch="unsup_data_weak", pertubation=pertubation_k)
+            #         # torch.save(proposals_roih_attacked_k, "attacked_pseudo_labels.pt")
+            #         pseudo_proposals_roih_attacked_k, _ = self.process_pseudo_label(
+            #             proposals_roih_attacked_k, cur_threshold, "roih", "thresholding"
+            #         )
+            #         merged_pseudo_proposals = self.merge_pseudo_labels(merged_pseudo_proposals, pseudo_proposals_roih_attacked_k, keep_factor= 0.8 + 0.1*i)
+            #         # torch.save(merged_pseudo_proposals[0], f"merged_pseudo_labels{i}.pt")
+            #         # print(i)
+            #     else:
+            #         break
+            # # if 3 in merged_pseudo_proposals[0].gt_classes and "gt_probs" in merged_pseudo_proposals[0]._fields:
+            # # # if (unlabel_data_k[0]["instances"].gt_probs[:,:-1]==0.2).any():
+            # # if (merged_pseudo_proposals[0].gt_probs==0.8).any():
+            # #     print(torch.where(merged_pseudo_proposals[0].gt_probs==0.8))
+            # #     breakpoint()
                 
-            # torch.save(unlabel_data_k, 'unlabel_data_k_pseudo.pt')
-            # # _, _, _ = self.model_teacher(unlabel_data_k, branch="attack", attack_mask = self.attack_mask, pertubation=pertubation)
+            # # torch.save(unlabel_data_k, 'unlabel_data_k_pseudo.pt')
+            # # # _, _, _ = self.model_teacher(unlabel_data_k, branch="attack", attack_mask = self.attack_mask, pertubation=pertubation)
 
             unlabel_data_q = self.add_label(
                 unlabel_data_q, merged_pseudo_proposals
