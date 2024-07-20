@@ -69,7 +69,8 @@ class FgFastRCNNOutputLayers(FastRCNNOutputLayers):
                     # breakpoint()
                     loss_cls = cross_entropy(scores[mask], gt_classes[mask], reduction="mean")
             else:
-                loss_cls = cross_entropy(scores, gt_classes, reduction="mean")
+                mask = gt_classes != self.num_classes
+                loss_cls = cross_entropy(scores[mask], gt_classes[mask], reduction="mean")
         else:
             assert attack_mask is None
             if gt_probs is not None:

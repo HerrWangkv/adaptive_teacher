@@ -733,7 +733,7 @@ class TATeacherTrainer(ATeacherTrainer):
                     pseudo_proposals_roih_attacked_k, _ = self.process_pseudo_label(
                         proposals_roih_attacked_k, cur_threshold, "roih", "thresholding"
                     )
-                    merged_pseudo_proposals = self.merge_pseudo_labels(merged_pseudo_proposals, pseudo_proposals_roih_attacked_k, keep_factor= 0.5 + 0.1*i)
+                    merged_pseudo_proposals = self.merge_pseudo_labels(merged_pseudo_proposals, pseudo_proposals_roih_attacked_k, keep_factor= 0.75 + 0.05*i)
                     # torch.save(merged_pseudo_proposals[0], f"merged_pseudo_labels{i}.pt")
                     # print(i)
                 else:
