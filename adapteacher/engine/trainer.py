@@ -722,7 +722,7 @@ class TATeacherTrainer(ATeacherTrainer):
             # torch.save(unlabel_data_k, "unlabel_data_k_pseudo.pt")
             merged_pseudo_proposals = pseudo_proposals_roih_unsup_k
             pertubation_k = None
-            for i in range(5):
+            for i in range(1):
                 step_pertubation, _, _ = self.model_teacher(unlabel_data_k, branch="attack", pertubation = pertubation_k)
                 step_pertubation *= self.cfg.SEMISUPNET.ATTACK_SEVERITY
                 pertubation_k = step_pertubation if pertubation_k is None else pertubation_k + step_pertubation
@@ -733,13 +733,15 @@ class TATeacherTrainer(ATeacherTrainer):
                     pseudo_proposals_roih_attacked_k, _ = self.process_pseudo_label(
                         proposals_roih_attacked_k, cur_threshold, "roih", "thresholding"
                     )
-                    merged_pseudo_proposals = self.merge_pseudo_labels(merged_pseudo_proposals, pseudo_proposals_roih_attacked_k, keep_factor= 0.75 + 0.05*i)
+                    merged_pseudo_proposals = self.merge_pseudo_labels(merged_pseudo_proposals, pseudo_proposals_roih_attacked_k, keep_factor= 0.8 + 0.1*i)
                     # torch.save(merged_pseudo_proposals[0], f"merged_pseudo_labels{i}.pt")
                     # print(i)
                 else:
                     break
             # if 3 in merged_pseudo_proposals[0].gt_classes and "gt_probs" in merged_pseudo_proposals[0]._fields:
             # # if (unlabel_data_k[0]["instances"].gt_probs[:,:-1]==0.2).any():
+            # if (merged_pseudo_proposals[0].gt_probs==0.8).any():
+            #     print(torch.where(merged_pseudo_proposals[0].gt_probs==0.8))
             #     breakpoint()
                 
             # torch.save(unlabel_data_k, 'unlabel_data_k_pseudo.pt')
@@ -853,7 +855,8 @@ class TATeacherTrainer(ATeacherTrainer):
             )
     
     def update_attack_mask(self):
-        self.attack_mask = (self.imbalance_metric.roi.diag() < self.imbalance_metric.roi.diag().mean()).cuda()
+        class_diff = self.imbalance_metric.roi[:,:-1] - self.imbalance_metric.roi[:,:-1].T
+        self.attack_mask = class_diff > 0
      
     def merge_pseudo_labels(self, pseudo_labels, attacked_predictions, keep_factor=0.8):
         merged_pseudo_labels = []
@@ -889,17 +892,18 @@ class TATeacherTrainer(ATeacherTrainer):
                         positions = positions[positions!=highest_iou_pos]
                         indices[positions] = -1
             indices[ious < 0.5] = -1       
-            attacked_classes_for_pseudo_labels = -1 * torch.ones_like(pseudo_classes)
+            attacked_classes_for_pseudo_labels = pseudo_classes.clone()
             # if matched, set attacked class as predicted class
             attacked_classes_for_pseudo_labels[indices >= 0] = pred_classes[indices[indices>=0]]
-            # if unmatched, set attacked class as background class
-            attacked_classes_for_pseudo_labels[indices == -1] = self.num_classes
+            # if attacked_classes major than pseudo_classes, set attacked class back to pseudo class
+            major_mask = self.attack_mask[pseudo_classes, attacked_classes_for_pseudo_labels]
+            attacked_classes_for_pseudo_labels[major_mask] = pseudo_classes[major_mask]
             never_attacked_mask = pseudo_probs.amax(dim=1)==1
             pseudo_probs[never_attacked_mask] *= keep_factor
             pseudo_probs[never_attacked_mask, attacked_classes_for_pseudo_labels[never_attacked_mask]] += 1 - keep_factor
             # if an attacked prediction is not used to match any pseudo label, add it to pseudo labels with a soft label (factor *  back, (1-factor) * obj)
             new_proposal_inst.gt_boxes = pseudo_boxes
-            new_proposal_inst.gt_classes = pseudo_probs[:,:-1].argmax(dim=1)
+            new_proposal_inst.gt_classes = pseudo_classes#pseudo_probs[:,:-1].argmax(dim=1)
             new_proposal_inst.gt_probs = pseudo_probs
             # pred_not_in_pseudo_mask = torch.ones_like(pred_classes, dtype=torch.bool)
             # pred_not_in_pseudo_mask[match_quality_matrix.amax(dim=0)>=0.5] = False
