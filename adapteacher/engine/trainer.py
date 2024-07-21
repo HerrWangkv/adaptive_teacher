@@ -733,7 +733,7 @@ class TATeacherTrainer(ATeacherTrainer):
                     pseudo_proposals_roih_attacked_k, _ = self.process_pseudo_label(
                         proposals_roih_attacked_k, cur_threshold, "roih", "thresholding"
                     )
-                    merged_pseudo_proposals = self.merge_pseudo_labels(merged_pseudo_proposals, pseudo_proposals_roih_attacked_k, keep_factor= 0.8 + 0.1*i)
+                    merged_pseudo_proposals = self.merge_pseudo_labels(merged_pseudo_proposals, pseudo_proposals_roih_attacked_k)
                     # torch.save(merged_pseudo_proposals[0], f"merged_pseudo_labels{i}.pt")
                     # print(i)
                 else:
@@ -865,15 +865,15 @@ class TATeacherTrainer(ATeacherTrainer):
             new_proposal_inst = Instances(image_shape)
             pseudo_boxes = pseudo_labels[i].gt_boxes
             pseudo_classes = pseudo_labels[i].gt_classes
-            if 'gt_probs' in pseudo_labels[i]._fields:
-                pseudo_probs = pseudo_labels[i].gt_probs
-            else:
-                pseudo_probs = torch.zeros_like(pseudo_labels[i].probs)
-                pseudo_probs[range(len(pseudo_classes)), pseudo_classes] = 1
+            # if 'gt_probs' in pseudo_labels[i]._fields:
+            #     pseudo_probs = pseudo_labels[i].gt_probs
+            # else:
+            #     pseudo_probs = torch.zeros_like(pseudo_labels[i].probs)
+            #     pseudo_probs[range(len(pseudo_classes)), pseudo_classes] = 1
             if len(pseudo_labels[i]) == 0 or len(attacked_predictions[i]) == 0:
                 new_proposal_inst.gt_boxes = pseudo_boxes
                 new_proposal_inst.gt_classes = pseudo_classes
-                new_proposal_inst.gt_probs = pseudo_probs
+                # new_proposal_inst.gt_probs = pseudo_probs
                 merged_pseudo_labels.append(new_proposal_inst)
                 continue
             pred_boxes = attacked_predictions[i].gt_boxes
@@ -881,6 +881,7 @@ class TATeacherTrainer(ATeacherTrainer):
             match_quality_matrix = pairwise_iou(pseudo_boxes, pred_boxes)
             # find best attacked prediction for each pseudo label
             ious, indices = match_quality_matrix.max(dim=1)
+            pred_not_in_pseudo_mask = torch.zeros_like(pred_classes, dtype=torch.bool)
             if len(indices.unique()) != len(indices):
                 for unique_index in indices.unique():
                     # Find all positions of this unique index in indices
@@ -898,13 +899,14 @@ class TATeacherTrainer(ATeacherTrainer):
             # if attacked_classes major than pseudo_classes, set attacked class back to pseudo class
             major_mask = self.attack_mask[pseudo_classes, attacked_classes_for_pseudo_labels]
             attacked_classes_for_pseudo_labels[major_mask] = pseudo_classes[major_mask]
-            never_attacked_mask = pseudo_probs.amax(dim=1)==1
-            pseudo_probs[never_attacked_mask] *= keep_factor
-            pseudo_probs[never_attacked_mask, attacked_classes_for_pseudo_labels[never_attacked_mask]] += 1 - keep_factor
+            pred_not_in_pseudo_mask[indices[attacked_classes_for_pseudo_labels!=pseudo_classes]] = True
+            # never_attacked_mask = pseudo_probs.amax(dim=1)==1
+            # pseudo_probs[never_attacked_mask] *= keep_factor
+            # pseudo_probs[never_attacked_mask, attacked_classes_for_pseudo_labels[never_attacked_mask]] += 1 - keep_factor
             # if an attacked prediction is not used to match any pseudo label, add it to pseudo labels with a soft label (factor *  back, (1-factor) * obj)
-            new_proposal_inst.gt_boxes = pseudo_boxes
-            new_proposal_inst.gt_classes = pseudo_classes#pseudo_probs[:,:-1].argmax(dim=1)
-            new_proposal_inst.gt_probs = pseudo_probs
+            new_proposal_inst.gt_boxes = Boxes(torch.cat([pseudo_boxes.tensor, pred_boxes[pred_not_in_pseudo_mask].tensor], dim=0))
+            new_proposal_inst.gt_classes = torch.cat([pseudo_classes, pred_classes[pred_not_in_pseudo_mask]])
+            # new_proposal_inst.gt_probs = pseudo_probs
             # pred_not_in_pseudo_mask = torch.ones_like(pred_classes, dtype=torch.bool)
             # pred_not_in_pseudo_mask[match_quality_matrix.amax(dim=0)>=0.5] = False
             # pred_not_in_pseudo_probs = torch.zeros([pred_not_in_pseudo_mask.sum(), self.num_classes + 1], device=pseudo_probs.device)
