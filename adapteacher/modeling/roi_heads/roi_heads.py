@@ -287,7 +287,7 @@ class FgPseudoROIHeads(StandardROIHeads):
         self, proposals: List[Instances], targets: List[Instances]
     ) -> List[Instances]:
         """
-        Add gt_probs to proposals if necessary
+        Add excluded_classes to proposals if necessary
         """
         # Augment proposals with ground-truth boxes.
         # In the case of learned proposals (e.g., RPN), when training starts
@@ -313,16 +313,16 @@ class FgPseudoROIHeads(StandardROIHeads):
                 targets_per_image.gt_boxes, proposals_per_image.proposal_boxes
             )
             matched_idxs, matched_labels = self.proposal_matcher(match_quality_matrix)
-            gt_probs = targets_per_image.gt_probs if "gt_probs" in targets_per_image._fields else None
-            sampled_idxs, gt_classes, gt_probs = self._sample_proposals(
-                matched_idxs, matched_labels, targets_per_image.gt_classes, gt_probs=gt_probs
+            excluded_classes = targets_per_image.excluded_classes if "excluded_classes" in targets_per_image._fields else None
+            sampled_idxs, gt_classes, excluded_classes = self._sample_proposals(
+                matched_idxs, matched_labels, targets_per_image.gt_classes, excluded_classes=excluded_classes
             )
 
             # Set target attributes of the sampled proposals:
             proposals_per_image = proposals_per_image[sampled_idxs]
             proposals_per_image.gt_classes = gt_classes
-            if gt_probs is not None:
-                proposals_per_image.gt_probs = gt_probs
+            if excluded_classes is not None:
+                proposals_per_image.excluded_classes = excluded_classes
 
             if has_gt:
                 sampled_targets = matched_idxs[sampled_idxs]
@@ -351,14 +351,14 @@ class FgPseudoROIHeads(StandardROIHeads):
         return proposals_with_gt
 
     def _sample_proposals(
-        self, matched_idxs: torch.Tensor, matched_labels: torch.Tensor, gt_classes: torch.Tensor, gt_probs=None
+        self, matched_idxs: torch.Tensor, matched_labels: torch.Tensor, gt_classes: torch.Tensor, excluded_classes=None
     ) -> Tuple[torch.Tensor, torch.Tensor]:
         """
-        add gt_probs if necessary
+        add excluded_classes if necessary
         """
         has_gt = gt_classes.numel() > 0
-        ret_probs = gt_probs is not None
-        has_probs = ret_probs and has_gt
+        ret_excluded = excluded_classes is not None
+        has_excluded = ret_excluded and has_gt
         # Get the corresponding GT for each proposal
         if has_gt:
             gt_classes = gt_classes[matched_idxs]
@@ -366,20 +366,18 @@ class FgPseudoROIHeads(StandardROIHeads):
             gt_classes[matched_labels == 0] = self.num_classes
             # Label ignore proposals (-1 label)
             gt_classes[matched_labels == -1] = -1
-            if has_probs:
-                gt_probs = gt_probs[matched_idxs]
-                gt_probs[matched_labels == 0] *= 0
-                gt_probs[matched_labels == 0, -1] += 1
+            if has_excluded:
+                excluded_classes = excluded_classes[matched_idxs]
+                excluded_classes[matched_labels == 0] = -1
 
         else:
             gt_classes = torch.zeros_like(matched_idxs) + self.num_classes
-            if ret_probs:
-                gt_probs = torch.zeros([len(matched_idxs), self.num_classes + 1]).to(matched_idxs.device)
-                gt_probs[:,-1] += 1
+            if ret_excluded:
+                excluded_classes = -torch.ones_like(matched_idxs)
 
         sampled_fg_idxs, sampled_bg_idxs = subsample_labels(
             gt_classes, self.batch_size_per_image, self.positive_fraction, self.num_classes
         )
 
         sampled_idxs = torch.cat([sampled_fg_idxs, sampled_bg_idxs], dim=0)
-        return sampled_idxs, gt_classes[sampled_idxs], gt_probs[sampled_idxs] if ret_probs else None
+        return sampled_idxs, gt_classes[sampled_idxs], excluded_classes[sampled_idxs] if ret_excluded else None
