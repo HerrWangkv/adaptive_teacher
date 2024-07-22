@@ -730,20 +730,14 @@ class TATeacherTrainer(ATeacherTrainer):
                 else:
                     break
                 
-            unlabel_data_k = self.remove_label(unlabel_data_k)
-            unlabel_data_k = self.add_label(
-                unlabel_data_k, replaced_pseudo_labels
-            )
             unlabel_data_q = self.add_label(
                 unlabel_data_q, merged_pseudo_proposals
             )
             unlabel_data_q = self.remove_cutout_objects(unlabel_data_k, unlabel_data_q)
 
             #  6. input strongly augmented unlabeled data into model
-            all_unlabel_data = unlabel_data_k + unlabel_data_q
-            pertubation = torch.cat([pertubation_k, torch.zeros_like(pertubation_k)], dim=0)
             record_all_unlabel_data, _, _ = self.model(
-                all_unlabel_data, branch="supervised_target", pertubation=pertubation
+                unlabel_data_q, branch="supervised_target"
             )   
             new_record_all_unlabel_data = {}
             for key in record_all_unlabel_data.keys():
