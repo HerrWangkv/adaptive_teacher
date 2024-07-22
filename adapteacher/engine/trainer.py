@@ -877,14 +877,14 @@ class TATeacherTrainer(ATeacherTrainer):
             indices[ious < 0.5] = -1       
             # Possible different classification results for pseudo labels
             attacked_classes_for_pseudo_labels = pseudo_classes.clone()
-            attacked_boxes_for_pseudo_labels = pseudo_boxes.clone()
+            attacked_boxes_for_pseudo_labels = pseudo_boxes.tensor.clone()
             # If matched, set attacked class as predicted class
             attacked_classes_for_pseudo_labels[indices >= 0] = pred_classes[indices[indices>=0]]
-            attacked_boxes_for_pseudo_labels[indices >= 0] = pred_boxes[indices[indices>=0]]
+            attacked_boxes_for_pseudo_labels[indices >= 0] = pred_boxes.tensor[indices[indices>=0]]
             # If the probability of attacked class being misclassified as pseudo class is above average, replace the pseudo class with attacked class
             replace_mask = self.replace_pseudo_label_mask[attacked_classes_for_pseudo_labels, pseudo_classes]
             pseudo_classes[replace_mask] = attacked_classes_for_pseudo_labels[replace_mask]
-            pseudo_boxes[replace_mask] = attacked_boxes_for_pseudo_labels[replace_mask]
+            pseudo_boxes.tensor[replace_mask] = attacked_boxes_for_pseudo_labels[replace_mask]
             # If the probability of attacked class being misclassified as pseudo class is below average but positive, add the attacked prediction
             add_mask = self.add_new_prediction_mask[attacked_classes_for_pseudo_labels, pseudo_classes]
             # The other possible classification result
