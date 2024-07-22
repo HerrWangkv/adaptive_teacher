@@ -73,14 +73,7 @@ class FgFastRCNNOutputLayers(FastRCNNOutputLayers):
                 loss_cls = cross_entropy(scores[mask], gt_classes[mask], reduction="mean")
         else:
             assert attack_mask is None
-            if excluded_classes is not None:
-                assert branch == "supervised_target"
-                excluded_mask = excluded_classes != -1
-                scores[excluded_mask,excluded_classes[excluded_mask]] *= 0
-                scores[excluded_mask,excluded_classes[excluded_mask]] += -np.inf
-                loss_cls = cross_entropy(scores, gt_classes, reduction="mean")
-            else:
-                loss_cls = cross_entropy(scores, gt_classes, reduction="mean")
+            loss_cls = cross_entropy(scores, gt_classes, reduction="mean")
             # else:
             #     pred_classes = torch.max(scores,dim=1).indices
             #     w = torch.ones_like(gt_classes)*1.0
