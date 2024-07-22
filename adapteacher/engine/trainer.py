@@ -728,25 +728,22 @@ class TATeacherTrainer(ATeacherTrainer):
                     #     breakpoint()
                 else:
                     break
-
-
+                
+            unlabel_data_k = self.remove_label(unlabel_data_k)
+            unlabel_data_k = self.add_label(
+                unlabel_data_k, merged_pseudo_proposals
+            )
             unlabel_data_q = self.add_label(
                 unlabel_data_q, merged_pseudo_proposals
             )
             unlabel_data_q = self.remove_cutout_objects(unlabel_data_k, unlabel_data_q)
 
-            # unlabel_data_q = self.cutout(unlabel_data_q)
-            # torch.save(unlabel_data_k, 'unlabel_data_k.pt')
-            # torch.save(unlabel_data_q, 'unlabel_data_q.pt')
-            # breakpoint()
-            # if unlabel_pertubation.any():
-            #     breakpoint()
-
-
             #  6. input strongly augmented unlabeled data into model
+            all_unlabel_data = unlabel_data_k + unlabel_data_q
+            pertubation = torch.cat([pertubation_k, torch.zeros_like(pertubation_k)], dim=0)
             record_all_unlabel_data, _, _ = self.model(
-                unlabel_data_q, branch="supervised_target"
-            )
+                all_unlabel_data, branch="supervised_target", pertubation=pertubation
+            )   
             new_record_all_unlabel_data = {}
             for key in record_all_unlabel_data.keys():
                 new_record_all_unlabel_data[key + "_pseudo"] = record_all_unlabel_data[
@@ -839,9 +836,10 @@ class TATeacherTrainer(ATeacherTrainer):
     
     def update_attack_mask(self):
         class_diff = self.imbalance_metric.roi[:,:-1] - self.imbalance_metric.roi[:,:-1].T
-        class_diff_mean = class_diff[class_diff>0].mean()
-        self.replace_pseudo_label_mask = class_diff > class_diff_mean
-        self.add_new_prediction_mask = torch.logical_and(class_diff > 0, class_diff <= class_diff_mean)
+        self.attack_mask = class_diff > 0
+        # class_diff_mean = class_diff[class_diff>0].mean()
+        # self.replace_pseudo_label_mask = class_diff > class_diff_mean
+        # self.add_new_prediction_mask = torch.logical_and(class_diff > 0, class_diff <= class_diff_mean)
      
     def merge_pseudo_labels(self, pseudo_labels, attacked_predictions, keep_factor=0.8):
         merged_pseudo_labels = []
@@ -877,16 +875,10 @@ class TATeacherTrainer(ATeacherTrainer):
             indices[ious < 0.5] = -1       
             # Possible different classification results for pseudo labels
             attacked_classes_for_pseudo_labels = pseudo_classes.clone()
-            attacked_boxes_for_pseudo_labels = pseudo_boxes.tensor.clone()
             # If matched, set attacked class as predicted class
             attacked_classes_for_pseudo_labels[indices >= 0] = pred_classes[indices[indices>=0]]
-            attacked_boxes_for_pseudo_labels[indices >= 0] = pred_boxes.tensor[indices[indices>=0]]
-            # If the probability of attacked class being misclassified as pseudo class is above average, replace the pseudo class with attacked class
-            replace_mask = self.replace_pseudo_label_mask[attacked_classes_for_pseudo_labels, pseudo_classes]
-            pseudo_classes[replace_mask] = attacked_classes_for_pseudo_labels[replace_mask]
-            pseudo_boxes.tensor[replace_mask] = attacked_boxes_for_pseudo_labels[replace_mask]
-            # If the probability of attacked class being misclassified as pseudo class is below average but positive, add the attacked prediction
-            add_mask = self.add_new_prediction_mask[attacked_classes_for_pseudo_labels, pseudo_classes]
+            # If the probability of attacked class being misclassified as pseudo class is higher than the opposite, add the attacked prediction
+            add_mask = self.attack_mask[attacked_classes_for_pseudo_labels, pseudo_classes]
             # The other possible classification result
             attacked_classes_not_in_pseudo = pred_classes[indices[add_mask]]
             attacked_boxs_not_in_pseudo = pred_boxes[indices[add_mask]]
