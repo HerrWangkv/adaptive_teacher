@@ -739,7 +739,7 @@ class TATeacherTrainer(ATeacherTrainer):
             unlabel_data_q_copied = self.remove_cutout_objects(unlabel_data_k, unlabel_data_q_copied)
 
             #  6. input strongly augmented unlabeled data into model
-            all_unlabel_data = torch.cat([unlabel_data_q, unlabel_data_q_copied], dim=0)
+            all_unlabel_data = unlabel_data_q + unlabel_data_q_copied
             record_all_unlabel_data, _, _ = self.model(
                 all_unlabel_data, branch="supervised_target"
             )   
