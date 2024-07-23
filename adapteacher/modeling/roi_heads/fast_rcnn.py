@@ -74,7 +74,6 @@ class FgFastRCNNOutputLayers(FastRCNNOutputLayers):
         else:
             assert attack_mask is None
             if gt_weights is not None:
-                assert branch == "supervised_target"
                 loss_cls = cross_entropy(scores, gt_classes, reduction="none")
                 loss_cls = torch.mean(loss_cls * gt_weights)
             else:

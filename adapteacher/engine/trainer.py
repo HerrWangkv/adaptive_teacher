@@ -622,12 +622,12 @@ class TATeacherTrainer(ATeacherTrainer):
 
             # create box
             new_bbox_loc = proposal_bbox_inst.pred_boxes.tensor[valid_map, :]
-            new_boxes = Boxes(new_bbox_loc)
+            new_boxes = Boxes(new_bbox_loc.cpu())
 
             # add boxes to instances
             new_proposal_inst.gt_boxes = new_boxes
-            new_proposal_inst.gt_classes = proposal_bbox_inst.pred_classes[valid_map]
-            new_proposal_inst.probs = proposal_bbox_inst.probs[valid_map]
+            new_proposal_inst.gt_classes = proposal_bbox_inst.pred_classes[valid_map].cpu()
+            new_proposal_inst.probs = proposal_bbox_inst.probs[valid_map].cpu()
 
         return new_proposal_inst
     
@@ -654,10 +654,10 @@ class TATeacherTrainer(ATeacherTrainer):
         ) % self.cfg.SEMISUPNET.TEACHER_UPDATE_ITER == 0:
             self._update_teacher_model(keep_rate=self.cfg.SEMISUPNET.EMA_KEEP_RATE)
 
-        label_data_q, _ = self.remove_cutout_objects(label_data_k, label_data_q)
         if self.iter < self.cfg.SEMISUPNET.BURN_UP_STEP:
 
             # input both strong and weak supervised data into model
+            label_data_q, _ = self.remove_cutout_objects(label_data_k, label_data_q)
             label_data_q.extend(label_data_k)
             record_dict, local_objectness, local_matrix = self.model(label_data_q, branch="supervised", ret_confusion_matrix=True)
             self.update_confusion_matrix(local_matrix)
@@ -679,10 +679,16 @@ class TATeacherTrainer(ATeacherTrainer):
             self.update_attack_mask_and_weight()
 
             #  1. input both strongly and weakly augmented labeled data into student model
+            with torch.no_grad():
+                proposals_roih_sup_k, _, _ = self.model_teacher(label_data_k, branch="unsup_data_weak")
+
+            pseudo_proposals_roih_sup_k, _ = self.process_pseudo_label(
+                proposals_roih_sup_k, self.cfg.SEMISUPNET.BBOX_THRESHOLD, "roih", "thresholding"
+            )
+            label_data_k, label_data_q = self.add_supervised_weights(label_data_k, label_data_q, pseudo_proposals_roih_sup_k)
+            label_data_q, _ = self.remove_cutout_objects(label_data_k, label_data_q)
             all_label_data = label_data_k + label_data_q
-            # if pertubation is not None:
-            #     pertubation = torch.cat([torch.zeros_like(pertubation), pertubation], dim=0)
-            record_all_label_data, local_objectness, local_matrix = self.model(
+            record_all_label_data, _, local_matrix = self.model(
                 all_label_data, branch="supervised", ret_confusion_matrix=True
             )
             record_dict.update(record_all_label_data)
@@ -693,10 +699,8 @@ class TATeacherTrainer(ATeacherTrainer):
                 proposals_roih_unsup_k, _, _ = self.model_teacher(unlabel_data_k, branch="unsup_data_weak")
 
             #  4. Pseudo-labeling
-            cur_threshold = self.cfg.SEMISUPNET.BBOX_THRESHOLD
-
             pseudo_proposals_roih_unsup_k, _ = self.process_pseudo_label(
-                proposals_roih_unsup_k, cur_threshold, "roih", "thresholding"
+                proposals_roih_unsup_k, self.cfg.SEMISUPNET.BBOX_THRESHOLD, "roih", "thresholding"
             )
 
             unlabel_data_k = self.add_label(
@@ -719,16 +723,9 @@ class TATeacherTrainer(ATeacherTrainer):
                         proposals_roih_attacked_k, _, _ = self.model_teacher(unlabel_data_k, branch="unsup_data_weak", pertubation=pertubation_k)
                     # torch.save(proposals_roih_attacked_k, "attacked_pseudo_labels.pt")
                     pseudo_proposals_roih_attacked_k, _ = self.process_pseudo_label(
-                        proposals_roih_attacked_k, cur_threshold, "roih", "thresholding"
+                        proposals_roih_attacked_k, self.cfg.SEMISUPNET.BBOX_THRESHOLD, "roih", "thresholding"
                     )
                     replaced_pseudo_labels = self.replace_pseudo_labels(replaced_pseudo_labels, pseudo_proposals_roih_attacked_k)
-                    # if 4 in merged_pseudo_proposals[0].gt_classes:
-                    #     print(unlabel_data_k[0]['instances'].gt_classes)
-                    #     print(merged_pseudo_proposals[0].gt_classes)
-                    #     torch.save(gt_labels, "gt_labels.pt")
-                    #     torch.save(unlabel_data_k, "unlabel_data_k_pseudo.pt")
-                    #     torch.save(merged_pseudo_proposals[0], f"merged_pseudo_labels{i}.pt")
-                    #     breakpoint()
                 else:
                     break
                 
@@ -736,7 +733,7 @@ class TATeacherTrainer(ATeacherTrainer):
                 unlabel_data_q_copied, replaced_pseudo_labels
             )
             unlabel_data_q, unlabel_data_q_copied = self.remove_cutout_objects(unlabel_data_k, unlabel_data_q, unlabel_data_q_copied)
-            unlabel_data_q, unlabel_data_q_copied = self.add_weights(unlabel_data_q, unlabel_data_q_copied)
+            unlabel_data_q, unlabel_data_q_copied = self.add_unsupervised_weights(unlabel_data_q, unlabel_data_q_copied)
             #  6. input strongly augmented unlabeled data into model
             all_unlabel_data = unlabel_data_q + unlabel_data_q_copied
             record_all_unlabel_data, _, _ = self.model(
@@ -810,6 +807,39 @@ class TATeacherTrainer(ATeacherTrainer):
                 self.cfg.SEMISUPNET.EMA_IMBALANCE_METRIC * self.imbalance_metric.rpn[mask]
                 + (1 - self.cfg.SEMISUPNET.EMA_IMBALANCE_METRIC) * local_objectness[0,mask]
             )
+    
+    def remove_cutout_objects(self, data_k, data_q, data_q_copied=None):
+        for image_index in range(len(data_k)):
+            boxes = data_q[image_index]['instances'].gt_boxes.tensor
+        if len(boxes):
+            valid_mask = torch.ones(len(boxes), dtype=torch.bool)
+            for i in range(boxes.shape[0]):
+                box_i = boxes[i].to(torch.int)
+                x1 = box_i[0]
+                y1 = box_i[1]
+                x2 = box_i[2]
+                y2 = box_i[3]
+                image_q_patch = data_q[image_index]['image'][:, y1:y2, x1:x2].to(torch.float)
+                image_k_patch = data_k[image_index]['image'][:, y1:y2, x1:x2].to(torch.float)
+                diff = (image_q_patch - image_k_patch).absolute().flatten()
+                ratio = (diff > 40).sum() / diff.numel()
+                if ratio > 0.5:
+                    valid_mask[i] = False
+            new_instance = Instances(data_q[image_index]['image'].shape[-2:])
+            new_instance.gt_boxes = Boxes(boxes[valid_mask])
+            new_instance.gt_classes = data_q[image_index]['instances'].gt_classes[valid_mask]
+            if "gt_weights" in data_q[image_index]['instances']._fields:
+                new_instance.gt_weights = data_q[image_index]['instances'].gt_weights[valid_mask]
+            data_q[image_index]['instances'] = new_instance
+            if data_q_copied is not None:
+                new_instance_copied = Instances(data_q_copied[image_index]['image'].shape[-2:])
+                new_instance_copied.gt_boxes = Boxes(data_q_copied[image_index]['instances'].gt_boxes.tensor[valid_mask])
+                new_instance_copied.gt_classes = data_q_copied[image_index]['instances'].gt_classes[valid_mask]
+                if "gt_weights" in data_q_copied[image_index]['instances']._fields:
+                    new_instance.gt_weights = data_q_copied[image_index]['instances'].gt_weights[valid_mask]
+                data_q_copied[image_index]['instances'] = new_instance_copied
+        return data_q, data_q_copied
+    
     def update_confusion_matrix(self, local_matrix):
         if comm.get_world_size() > 1:
             dist.all_reduce(local_matrix, op=dist.ReduceOp.SUM)
@@ -835,8 +865,29 @@ class TATeacherTrainer(ATeacherTrainer):
     def update_attack_mask_and_weight(self):
         class_diff = self.imbalance_metric.roi[:,:-1] - self.imbalance_metric.roi[:,:-1].T
         self.attack_mask = class_diff > 0
-        self.attack_weight = torch.sqrt(class_diff.abs()) * class_diff.sign() + 1
-    
+        self.attack_weight = (torch.sqrt(class_diff.abs()) * class_diff.sign() + 1).cpu()
+
+    def one_to_one_match(self, boxes1, boxes2):
+        if not len(boxes1) or not len(boxes2):
+            return -torch.ones(len(boxes1), dtype=torch.long)
+        match_quality_matrix = pairwise_iou(boxes1, boxes2)
+        # Find best box2 for each box1
+        ious, indices = match_quality_matrix.max(dim=1)
+        if len(indices.unique()) != len(indices):
+            for unique_index in indices.unique():
+                # Find all matches of this box2
+                positions = (indices == unique_index).nonzero(as_tuple=True)[0]
+                # If there's box2 is only matched to one box1, keep it as it is
+                # Otherwise, only keep the best box1 for box2
+                if len(positions) != 1:
+                    # Find the position with the highest IoU
+                    highest_iou_pos = positions[ious[positions].argmax()]
+                    positions = positions[positions!=highest_iou_pos]
+                    indices[positions] = -1
+        # Not matched attacked predictions are ignored
+        indices[ious < 0.5] = -1
+        return indices
+
     def replace_pseudo_labels(self, pseudo_labels, attacked_predictions):
         replaced_pseudo_labels = []
         for i in range(len(pseudo_labels)):
@@ -854,21 +905,7 @@ class TATeacherTrainer(ATeacherTrainer):
             # Attacked predictions
             pred_boxes = attacked_predictions[i].gt_boxes
             pred_classes = attacked_predictions[i].gt_classes
-            match_quality_matrix = pairwise_iou(pseudo_boxes, pred_boxes)
-            # Find best attacked prediction for each pseudo label
-            ious, indices = match_quality_matrix.max(dim=1)
-            if len(indices.unique()) != len(indices):
-                for unique_index in indices.unique():
-                    # Find all positions of this unique index in indices
-                    positions = (indices == unique_index).nonzero(as_tuple=True)[0]
-                    # If there's only one position, keep it as is
-                    if len(positions) != 1:
-                        # Find the position with the highest IoU
-                        highest_iou_pos = positions[ious[positions].argmax()]
-                        positions = positions[positions!=highest_iou_pos]
-                        indices[positions] = -1
-            # Not matched attacked predictions are ignored
-            indices[ious < 0.5] = -1       
+            indices = self.one_to_one_match(pseudo_boxes, pred_boxes)
             # Possible different classification results for pseudo labels
             attacked_classes_for_pseudo_labels = pseudo_classes.clone()
             # If matched, set attacked class as predicted class
@@ -883,36 +920,23 @@ class TATeacherTrainer(ATeacherTrainer):
             new_proposal_inst_replaced.gt_classes = replaced_classes
             replaced_pseudo_labels.append(new_proposal_inst_replaced)
         return replaced_pseudo_labels
-
-    def remove_cutout_objects(self, data_k, data_q, data_q_copied=None):
-        for image_index in range(len(data_k)):
-            boxes = data_q[image_index]['instances'].gt_boxes.tensor
-        if len(boxes):
-            valid_mask = torch.ones(len(boxes), dtype=torch.bool)
-            for i in range(boxes.shape[0]):
-                box_i = boxes[i].to(torch.int)
-                x1 = box_i[0]
-                y1 = box_i[1]
-                x2 = box_i[2]
-                y2 = box_i[3]
-                image_q_patch = data_q[image_index]['image'][:, y1:y2, x1:x2].to(torch.float)
-                image_k_patch = data_k[image_index]['image'][:, y1:y2, x1:x2].to(torch.float)
-                diff = (image_q_patch - image_k_patch).absolute().flatten()
-                ratio = (diff > 40).sum() / diff.numel()
-                if ratio > 0.5:
-                    valid_mask[i] = False
-            new_instance = Instances(data_q[image_index]['image'].shape[-2:])
-            new_instance.gt_boxes = Boxes(boxes[valid_mask])
-            new_instance.gt_classes = data_q[image_index]['instances'].gt_classes[valid_mask]
-            data_q[image_index]['instances'] = new_instance
-            if data_q_copied is not None:
-                new_instance_copied = Instances(data_q_copied[image_index]['image'].shape[-2:])
-                new_instance_copied.gt_boxes = Boxes(data_q_copied[image_index]['instances'].gt_boxes.tensor[valid_mask])
-                new_instance_copied.gt_classes = data_q_copied[image_index]['instances'].gt_classes[valid_mask]
-                data_q_copied[image_index]['instances'] = new_instance_copied
-        return data_q, data_q_copied
-
-    def add_weights(self, unlabel_data_q, unlabel_data_q_copied):
+    
+    def add_supervised_weights(self, label_data_k, label_data_q, pseudo_labels):
+        for i in range(len(label_data_k)):
+            indices = self.one_to_one_match(label_data_k[i]['instances'].gt_boxes, pseudo_labels[i].gt_boxes)
+            weights = torch.ones_like(label_data_k[i]['instances'].gt_classes, dtype=torch.float)
+            if not (indices >= 0).any():
+                label_data_k[i]['instances'].gt_weights = weights
+                label_data_q[i]['instances'].gt_weights = weights
+                continue
+            # ground truth is vulnerable if matched with a misclassified pseudo label
+            vulnerable_gt_mask = torch.logical_and(indices >= 0, label_data_k[i]['instances'].gt_classes != pseudo_labels[i].gt_classes[indices])
+            weights[vulnerable_gt_mask] = self.attack_weight[label_data_k[i]['instances'].gt_classes[vulnerable_gt_mask], pseudo_labels[i].gt_classes[indices[vulnerable_gt_mask]]]
+            label_data_k[i]['instances'].gt_weights = weights
+            label_data_q[i]['instances'].gt_weights = weights
+        return label_data_k, label_data_q
+    
+    def add_unsupervised_weights(self, unlabel_data_q, unlabel_data_q_copied):
         for i in range(len(unlabel_data_q)):
             assert len(unlabel_data_q[i]['instances'].gt_classes) == len(unlabel_data_q_copied[i]['instances'].gt_classes)
             diff_mask = unlabel_data_q[i]['instances'].gt_classes != unlabel_data_q_copied[i]['instances'].gt_classes
