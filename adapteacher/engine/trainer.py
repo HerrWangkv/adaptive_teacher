@@ -676,7 +676,7 @@ class TATeacherTrainer(ATeacherTrainer):
             # gt_labels = self.get_label(unlabel_data_k)
             unlabel_data_q = self.remove_label(unlabel_data_q)
             unlabel_data_k = self.remove_label(unlabel_data_k)
-            self.update_attack_mask()
+            self.update_attack_mask_and_weight()
 
             #  1. input both strongly and weakly augmented labeled data into student model
             all_label_data = label_data_k + label_data_q
@@ -832,12 +832,10 @@ class TATeacherTrainer(ATeacherTrainer):
                 + (1 - self.cfg.SEMISUPNET.EMA_IMBALANCE_METRIC) * local_matrix[mask]
             )
     
-    def update_attack_mask(self):
+    def update_attack_mask_and_weight(self):
         class_diff = self.imbalance_metric.roi[:,:-1] - self.imbalance_metric.roi[:,:-1].T
         self.attack_mask = class_diff > 0
-        # class_diff_mean = class_diff[class_diff>0].mean()
-        # self.replace_pseudo_label_mask = class_diff > class_diff_mean
-        # self.add_new_prediction_mask = torch.logical_and(class_diff > 0, class_diff <= class_diff_mean)
+        self.attack_weight = torch.sqrt(class_diff.abs()) * class_diff.sign() + 1
     
     def replace_pseudo_labels(self, pseudo_labels, attacked_predictions):
         replaced_pseudo_labels = []
@@ -918,8 +916,14 @@ class TATeacherTrainer(ATeacherTrainer):
         for i in range(len(unlabel_data_q)):
             assert len(unlabel_data_q[i]['instances'].gt_classes) == len(unlabel_data_q_copied[i]['instances'].gt_classes)
             diff_mask = unlabel_data_q[i]['instances'].gt_classes != unlabel_data_q_copied[i]['instances'].gt_classes
-            weights = torch.ones_like(unlabel_data_q[i]['instances'].gt_classes, dtype=torch.float)
-            weights[diff_mask] = 2
+            weights = self.attack_weight[unlabel_data_q[i]['instances'].gt_classes, unlabel_data_q_copied[i]['instances'].gt_classes]
+            assert (weights <= 1).all()
+            # if diff_mask.any():
+            #     print(unlabel_data_q[i]['instances'].gt_classes[diff_mask], unlabel_data_q_copied[i]['instances'].gt_classes[diff_mask])
+            #     print(weights[diff_mask])
+            #     breakpoint()
             unlabel_data_q[i]['instances'].gt_weights = weights
-            unlabel_data_q_copied[i]['instances'].gt_weights = weights
+            weights_copied = self.attack_weight[unlabel_data_q_copied[i]['instances'].gt_classes, unlabel_data_q[i]['instances'].gt_classes]
+            assert (weights_copied >= 1).all()
+            unlabel_data_q_copied[i]['instances'].gt_weights = weights_copied
         return unlabel_data_q, unlabel_data_q_copied
