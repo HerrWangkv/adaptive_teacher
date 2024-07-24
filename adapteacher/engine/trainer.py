@@ -654,7 +654,7 @@ class TATeacherTrainer(ATeacherTrainer):
         ) % self.cfg.SEMISUPNET.TEACHER_UPDATE_ITER == 0:
             self._update_teacher_model(keep_rate=self.cfg.SEMISUPNET.EMA_KEEP_RATE)
 
-        label_data_q, _ = self.remove_cutout_objects(label_data_k, label_data_q)
+        # label_data_q, _ = self.remove_cutout_objects(label_data_k, label_data_q)
         if self.iter < self.cfg.SEMISUPNET.BURN_UP_STEP:
 
             # input both strong and weak supervised data into model
@@ -709,34 +709,21 @@ class TATeacherTrainer(ATeacherTrainer):
 
             #  5. conduct targeted attack on unlabel_data_q
             replaced_pseudo_labels = pseudo_proposals_roih_unsup_k
-            pertubation_k = None
-            for i in range(1):
-                step_pertubation, _, _ = self.model_teacher(unlabel_data_k, branch="attack", pertubation = pertubation_k)
-                step_pertubation *= self.cfg.SEMISUPNET.ATTACK_SEVERITY
-                pertubation_k = step_pertubation if pertubation_k is None else pertubation_k + step_pertubation
-                if step_pertubation.any():
-                    with torch.no_grad():
-                        proposals_roih_attacked_k, _, _ = self.model_teacher(unlabel_data_k, branch="unsup_data_weak", pertubation=pertubation_k)
-                    # torch.save(proposals_roih_attacked_k, "attacked_pseudo_labels.pt")
-                    pseudo_proposals_roih_attacked_k, _ = self.process_pseudo_label(
-                        proposals_roih_attacked_k, cur_threshold, "roih", "thresholding"
-                    )
-                    replaced_pseudo_labels = self.replace_pseudo_labels(replaced_pseudo_labels, pseudo_proposals_roih_attacked_k)
-                    # if 4 in merged_pseudo_proposals[0].gt_classes:
-                    #     print(unlabel_data_k[0]['instances'].gt_classes)
-                    #     print(merged_pseudo_proposals[0].gt_classes)
-                    #     torch.save(gt_labels, "gt_labels.pt")
-                    #     torch.save(unlabel_data_k, "unlabel_data_k_pseudo.pt")
-                    #     torch.save(merged_pseudo_proposals[0], f"merged_pseudo_labels{i}.pt")
-                    #     breakpoint()
-                else:
-                    break
-                
+            pertubation_k, _, _ = self.model_teacher(unlabel_data_k, branch="attack")
+            pertubation_k *= self.cfg.SEMISUPNET.ATTACK_SEVERITY
+            if pertubation_k.any():
+                with torch.no_grad():
+                    proposals_roih_attacked_k, _, _ = self.model_teacher(unlabel_data_k, branch="unsup_data_weak", pertubation=pertubation_k)
+                pseudo_proposals_roih_attacked_k, _ = self.process_pseudo_label(
+                    proposals_roih_attacked_k, cur_threshold, "roih", "thresholding"
+                )
+                replaced_pseudo_labels = pseudo_proposals_roih_attacked_k# self.replace_pseudo_labels(pseudo_proposals_roih_unsup_k, pseudo_proposals_roih_attacked_k)
             unlabel_data_q_copied = self.add_label(
                 unlabel_data_q_copied, replaced_pseudo_labels
             )
-            unlabel_data_q, unlabel_data_q_copied = self.remove_cutout_objects(unlabel_data_k, unlabel_data_q, unlabel_data_q_copied)
-            unlabel_data_q, unlabel_data_q_copied = self.add_weights(unlabel_data_q, unlabel_data_q_copied)
+            # unlabel_data_q, unlabel_data_q_copied = self.remove_cutout_objects(unlabel_data_k, unlabel_data_q, unlabel_data_q_copied)
+            # unlabel_data_q, unlabel_data_q_copied = self.optimize_data(unlabel_data_q, unlabel_data_q_copied)
+            # unlabel_data_q, unlabel_data_q_copied = self.add_weights(unlabel_data_q, unlabel_data_q_copied)
             #  6. input strongly augmented unlabeled data into model
             all_unlabel_data = unlabel_data_q + unlabel_data_q_copied
             record_all_unlabel_data, _, _ = self.model(
