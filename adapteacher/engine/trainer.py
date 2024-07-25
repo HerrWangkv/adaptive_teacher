@@ -622,12 +622,12 @@ class TATeacherTrainer(ATeacherTrainer):
 
             # create box
             new_bbox_loc = proposal_bbox_inst.pred_boxes.tensor[valid_map, :]
-            new_boxes = Boxes(new_bbox_loc)
+            new_boxes = Boxes(new_bbox_loc.cpu())
 
             # add boxes to instances
             new_proposal_inst.gt_boxes = new_boxes
-            new_proposal_inst.gt_classes = proposal_bbox_inst.pred_classes[valid_map]
-            new_proposal_inst.probs = proposal_bbox_inst.probs[valid_map]
+            new_proposal_inst.gt_classes = proposal_bbox_inst.pred_classes[valid_map].cpu()
+            new_proposal_inst.probs = proposal_bbox_inst.probs[valid_map].cpu()
 
         return new_proposal_inst
     
@@ -643,6 +643,8 @@ class TATeacherTrainer(ATeacherTrainer):
         # data_q and data_k from different augmentations (q:strong, k:weak)
         # label_strong, label_weak, unlabed_strong, unlabled_weak
         label_data_q, label_data_k, unlabel_data_q, unlabel_data_k = data
+        # if 3 not in unlabel_data_k[0]["instances"].gt_classes:
+        #     return
         data_time = time.perf_counter() - start
 
         # burn-in stage (supervised training with labeled data)
@@ -654,7 +656,7 @@ class TATeacherTrainer(ATeacherTrainer):
         ) % self.cfg.SEMISUPNET.TEACHER_UPDATE_ITER == 0:
             self._update_teacher_model(keep_rate=self.cfg.SEMISUPNET.EMA_KEEP_RATE)
 
-        label_data_q, _ = self.remove_cutout_objects(label_data_k, label_data_q)
+        # label_data_q, _ = self.remove_cutout_objects(label_data_k, label_data_q)
         if self.iter < self.cfg.SEMISUPNET.BURN_UP_STEP:
 
             # input both strong and weak supervised data into model
@@ -673,7 +675,7 @@ class TATeacherTrainer(ATeacherTrainer):
             record_dict = {}
 
             #  0. remove unlabeled data labels
-            # gt_labels = self.get_label(unlabel_data_k)
+            gt_labels = self.get_label(unlabel_data_k)
             unlabel_data_q = self.remove_label(unlabel_data_q)
             unlabel_data_k = self.remove_label(unlabel_data_k)
             self.update_attack_mask_and_weight()
@@ -708,35 +710,32 @@ class TATeacherTrainer(ATeacherTrainer):
             )
 
             #  5. conduct targeted attack on unlabel_data_q
-            replaced_pseudo_labels = pseudo_proposals_roih_unsup_k
-            pertubation_k = None
-            for i in range(1):
-                step_pertubation, _, _ = self.model_teacher(unlabel_data_k, branch="attack", pertubation = pertubation_k)
-                step_pertubation *= self.cfg.SEMISUPNET.ATTACK_SEVERITY
-                pertubation_k = step_pertubation if pertubation_k is None else pertubation_k + step_pertubation
-                if step_pertubation.any():
-                    with torch.no_grad():
-                        proposals_roih_attacked_k, _, _ = self.model_teacher(unlabel_data_k, branch="unsup_data_weak", pertubation=pertubation_k)
-                    # torch.save(proposals_roih_attacked_k, "attacked_pseudo_labels.pt")
-                    pseudo_proposals_roih_attacked_k, _ = self.process_pseudo_label(
-                        proposals_roih_attacked_k, cur_threshold, "roih", "thresholding"
-                    )
-                    replaced_pseudo_labels = self.replace_pseudo_labels(replaced_pseudo_labels, pseudo_proposals_roih_attacked_k)
-                    # if 4 in merged_pseudo_proposals[0].gt_classes:
-                    #     print(unlabel_data_k[0]['instances'].gt_classes)
-                    #     print(merged_pseudo_proposals[0].gt_classes)
-                    #     torch.save(gt_labels, "gt_labels.pt")
-                    #     torch.save(unlabel_data_k, "unlabel_data_k_pseudo.pt")
-                    #     torch.save(merged_pseudo_proposals[0], f"merged_pseudo_labels{i}.pt")
-                    #     breakpoint()
-                else:
-                    break
+            adversarial_pseudo_labels = pseudo_proposals_roih_unsup_k
+            pertubation_k, _, _ = self.model_teacher(unlabel_data_k, branch="attack")
+            pertubation_k *= self.cfg.SEMISUPNET.ATTACK_SEVERITY
+            if pertubation_k.any():
+                with torch.no_grad():
+                    proposals_roih_attacked_k, _, _ = self.model_teacher(unlabel_data_k, branch="unsup_data_weak", pertubation=pertubation_k)
+                # torch.save(proposals_roih_attacked_k, "attacked_pseudo_labels.pt")
+                pseudo_proposals_roih_attacked_k, _ = self.process_pseudo_label(
+                    proposals_roih_attacked_k, cur_threshold, "roih", "thresholding"
+                )
+                adversarial_pseudo_labels = self.generate_adversarial_pseudo_labels(pseudo_proposals_roih_unsup_k, pseudo_proposals_roih_attacked_k)
+                # if len(pseudo_proposals_roih_attacked_k[0].gt_classes) != len(adversarial_pseudo_labels[0].gt_classes):
+                # # if 3 in pseudo_proposals_roih_attacked_k[0].gt_classes:
+                #     print(pseudo_proposals_roih_attacked_k[0].gt_classes)
+                #     print(adversarial_pseudo_labels[0].gt_classes)
+                #     torch.save(gt_labels, "0/gt_labels.pt")
+                #     torch.save(unlabel_data_k, "0/unlabel_data_k_pseudo.pt")
+                #     torch.save(pseudo_proposals_roih_attacked_k, f"0/attacked_pseudo_labels.pt")
+                #     torch.save(adversarial_pseudo_labels, f"0/adversarial_pseudo_labels.pt")
+                #     breakpoint()
                 
             unlabel_data_q_copied = self.add_label(
-                unlabel_data_q_copied, replaced_pseudo_labels
+                unlabel_data_q_copied, adversarial_pseudo_labels
             )
-            unlabel_data_q, unlabel_data_q_copied = self.remove_cutout_objects(unlabel_data_k, unlabel_data_q, unlabel_data_q_copied)
-            unlabel_data_q, unlabel_data_q_copied = self.add_weights(unlabel_data_q, unlabel_data_q_copied)
+            # unlabel_data_q, unlabel_data_q_copied = self.remove_cutout_objects(unlabel_data_k, unlabel_data_q, unlabel_data_q_copied)
+            # unlabel_data_q, unlabel_data_q_copied = self.add_weights(unlabel_data_q, unlabel_data_q_copied)
             #  6. input strongly augmented unlabeled data into model
             all_unlabel_data = unlabel_data_q + unlabel_data_q_copied
             record_all_unlabel_data, _, _ = self.model(
@@ -813,7 +812,8 @@ class TATeacherTrainer(ATeacherTrainer):
     def update_confusion_matrix(self, local_matrix):
         if comm.get_world_size() > 1:
             dist.all_reduce(local_matrix, op=dist.ReduceOp.SUM)
-
+        
+        local_matrix = local_matrix.cpu()
         # Normalize local matrix
         sum_values = local_matrix.sum(dim=1)
         mask = sum_values!=0
@@ -823,7 +823,7 @@ class TATeacherTrainer(ATeacherTrainer):
             self.imbalance_metric.roi = local_matrix
         else:
             if self.imbalance_metric.roi.get_device() == -1:
-                self.imbalance_metric.roi = self.imbalance_metric.roi.to(local_matrix.device)
+                self.imbalance_metric.roi = self.imbalance_metric.roi.cpu()
             self.imbalance_metric.roi[self.imbalance_metric.roi.sum(dim=1) == 0] = local_matrix[
                 self.imbalance_metric.roi.sum(dim=1) == 0
             ]
@@ -834,28 +834,29 @@ class TATeacherTrainer(ATeacherTrainer):
     
     def update_attack_mask_and_weight(self):
         class_diff = self.imbalance_metric.roi[:,:-1] - self.imbalance_metric.roi[:,:-1].T
-        self.attack_mask = class_diff > 0
-        self.attack_weight = torch.sqrt(class_diff.abs()) * class_diff.sign() + 1
+        self.attack_mask = torch.ones_like(self.imbalance_metric.roi, dtype=torch.bool)
+        self.attack_mask[:,:-1] = class_diff >= 0
+        self.major_mask = self.imbalance_metric.roi.diag() > self.imbalance_metric.roi.diag().mean()
     
-    def replace_pseudo_labels(self, pseudo_labels, attacked_predictions):
-        replaced_pseudo_labels = []
+    def generate_adversarial_pseudo_labels(self, pseudo_labels, attacked_pseudo_labels):
+        adversarial_pseudo_labels = []
         for i in range(len(pseudo_labels)):
             image_shape = pseudo_labels[i].image_size
-            new_proposal_inst_replaced = Instances(image_shape)
+            new_proposal_inst_adversarial = Instances(image_shape)
             # Pseudo labels generated by teacher model
-            pseudo_boxes = pseudo_labels[i].gt_boxes
-            pseudo_classes = pseudo_labels[i].gt_classes
-            # If pseudo labels or attacked predictions are empty, keep the pseudo labels
-            if len(pseudo_labels[i]) == 0 or len(attacked_predictions[i]) == 0:
-                new_proposal_inst_replaced.gt_boxes = pseudo_boxes
-                new_proposal_inst_replaced.gt_classes = pseudo_classes
-                replaced_pseudo_labels.append(new_proposal_inst_replaced)
+            pseudo_boxes = pseudo_labels[i].gt_boxes.clone()
+            pseudo_classes = pseudo_labels[i].gt_classes.clone()
+            # Attacked pseudo labels generated by teacher model
+            attacked_boxes = attacked_pseudo_labels[i].gt_boxes.clone()
+            attacked_classes = attacked_pseudo_labels[i].gt_classes.clone()
+            # If pseudo labels or attacked predictions are empty, use the attacked pseudo labels as adversarial pseudo labels
+            if len(pseudo_labels[i]) == 0 or len(attacked_pseudo_labels[i]) == 0:
+                new_proposal_inst_adversarial.gt_boxes = attacked_boxes
+                new_proposal_inst_adversarial.gt_classes = attacked_classes
+                adversarial_pseudo_labels.append(new_proposal_inst_adversarial)
                 continue
-            # Attacked predictions
-            pred_boxes = attacked_predictions[i].gt_boxes
-            pred_classes = attacked_predictions[i].gt_classes
-            match_quality_matrix = pairwise_iou(pseudo_boxes, pred_boxes)
-            # Find best attacked prediction for each pseudo label
+            match_quality_matrix = pairwise_iou(attacked_boxes, pseudo_boxes)
+            # Find one-to-one matching between attacked and initial pseudo labels
             ious, indices = match_quality_matrix.max(dim=1)
             if len(indices.unique()) != len(indices):
                 for unique_index in indices.unique():
@@ -867,22 +868,26 @@ class TATeacherTrainer(ATeacherTrainer):
                         highest_iou_pos = positions[ious[positions].argmax()]
                         positions = positions[positions!=highest_iou_pos]
                         indices[positions] = -1
-            # Not matched attacked predictions are ignored
-            indices[ious < 0.5] = -1       
-            # Possible different classification results for pseudo labels
-            attacked_classes_for_pseudo_labels = pseudo_classes.clone()
-            # If matched, set attacked class as predicted class
-            attacked_classes_for_pseudo_labels[indices >= 0] = pred_classes[indices[indices>=0]]
-            # If the probability of attacked class being misclassified as pseudo class is higher than the opposite, add the attacked prediction
-            add_mask = self.attack_mask[attacked_classes_for_pseudo_labels, pseudo_classes]
-            replaced_classes = pseudo_classes.clone()
-            replaced_boxes = Boxes(pseudo_boxes.tensor.clone())
-            replaced_boxes.tensor[add_mask] = pred_boxes[indices[add_mask]].tensor
-            replaced_classes[add_mask] = pred_classes[indices[add_mask]]
-            new_proposal_inst_replaced.gt_boxes = replaced_boxes
-            new_proposal_inst_replaced.gt_classes = replaced_classes
-            replaced_pseudo_labels.append(new_proposal_inst_replaced)
-        return replaced_pseudo_labels
+            # Not matched attacked pseudo labels are set as background
+            indices[ious < 0.5] = -1
+            # Classification results in matched initial pseudo labels
+            initial_attacked_classes = pseudo_classes[indices].clone()
+            initial_attacked_boxes = pseudo_boxes[indices].clone()
+            initial_attacked_classes[indices==-1] = self.num_classes
+            # If the matched bboxes are attacked as a more major class, replace the proposal in adversarial pseudo labels with the initial one
+            minor_to_major_mask = ~self.attack_mask[attacked_classes, initial_attacked_classes]
+            attacked_classes[minor_to_major_mask] = initial_attacked_classes[minor_to_major_mask]
+            attacked_boxes.tensor[minor_to_major_mask] = initial_attacked_boxes.tensor[minor_to_major_mask]
+            valid_mask = self.attack_mask[attacked_classes, initial_attacked_classes]
+            # remove unmatched major attacked pseudo labels from adversarial pseudo labels
+            valid_mask[torch.logical_and(indices==-1, self.major_mask[attacked_classes])] = False
+            # Add unmatched minor pseudo labels to adversarial pseudo labels
+            minor_to_unmatched_mask = ~self.major_mask[pseudo_classes]
+            minor_to_unmatched_mask[indices[indices>=0].unique()] = False
+            new_proposal_inst_adversarial.gt_boxes = Boxes(torch.cat([attacked_boxes.tensor[valid_mask], pseudo_boxes.tensor[minor_to_unmatched_mask]], dim=0))
+            new_proposal_inst_adversarial.gt_classes = torch.cat([attacked_classes[valid_mask], pseudo_classes[minor_to_unmatched_mask]])
+            adversarial_pseudo_labels.append(new_proposal_inst_adversarial)
+        return adversarial_pseudo_labels
 
     def remove_cutout_objects(self, data_k, data_q, data_q_copied=None):
         for image_index in range(len(data_k)):
