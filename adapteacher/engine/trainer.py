@@ -872,15 +872,11 @@ class TATeacherTrainer(ATeacherTrainer):
             indices[ious < 0.5] = -1
             # Classification results in matched initial pseudo labels
             initial_attacked_classes = pseudo_classes[indices].clone()
-            initial_attacked_boxes = pseudo_boxes[indices].clone()
             initial_attacked_classes[indices==-1] = self.num_classes
-            # If the matched bboxes are attacked as a more major class, replace the proposal in adversarial pseudo labels with the initial one
-            minor_to_major_mask = ~self.attack_mask[attacked_classes, initial_attacked_classes]
-            attacked_classes[minor_to_major_mask] = initial_attacked_classes[minor_to_major_mask]
-            attacked_boxes.tensor[minor_to_major_mask] = initial_attacked_boxes.tensor[minor_to_major_mask]
+            # If the matched bboxes are attacked as a more major class, remove those proposals from adversarial pseudo labels
             valid_mask = self.attack_mask[attacked_classes, initial_attacked_classes]
-            # remove unmatched attacked pseudo labels from adversarial pseudo labels
-            valid_mask[indices==-1] = False
+            # remove unmatched major attacked pseudo labels from adversarial pseudo labels
+            valid_mask[torch.logical_and(indices==-1, self.major_mask[attacked_classes])] = False
             new_proposal_inst_adversarial.gt_boxes = Boxes(attacked_boxes.tensor[valid_mask])
             new_proposal_inst_adversarial.gt_classes = attacked_classes[valid_mask]
             adversarial_pseudo_labels.append(new_proposal_inst_adversarial)
