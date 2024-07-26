@@ -881,11 +881,8 @@ class TATeacherTrainer(ATeacherTrainer):
             valid_mask = self.attack_mask[attacked_classes, initial_attacked_classes]
             # remove unmatched major attacked pseudo labels from adversarial pseudo labels
             valid_mask[torch.logical_and(indices==-1, self.major_mask[attacked_classes])] = False
-            # Add unmatched minor pseudo labels to adversarial pseudo labels
-            minor_to_unmatched_mask = ~self.major_mask[pseudo_classes]
-            minor_to_unmatched_mask[indices[indices>=0].unique()] = False
-            new_proposal_inst_adversarial.gt_boxes = Boxes(torch.cat([attacked_boxes.tensor[valid_mask], pseudo_boxes.tensor[minor_to_unmatched_mask]], dim=0))
-            new_proposal_inst_adversarial.gt_classes = torch.cat([attacked_classes[valid_mask], pseudo_classes[minor_to_unmatched_mask]])
+            new_proposal_inst_adversarial.gt_boxes = Boxes(attacked_boxes.tensor[valid_mask])
+            new_proposal_inst_adversarial.gt_classes = attacked_classes[valid_mask]
             adversarial_pseudo_labels.append(new_proposal_inst_adversarial)
         return adversarial_pseudo_labels
 
