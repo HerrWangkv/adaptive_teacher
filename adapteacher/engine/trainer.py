@@ -682,11 +682,10 @@ class TATeacherTrainer(ATeacherTrainer):
 
             #  1. input both strongly and weakly augmented labeled data into student model
             all_label_data = label_data_k + label_data_q
-            pertubation_label_k, _, _ = self.model(label_data_k, branch="attack")
-            pertubation_label_k *= self.cfg.SEMISUPNET.ATTACK_SEVERITY
-            pertubation_label = torch.cat([pertubation_label_k, torch.zeros_like(pertubation_label_k)], dim=0)
+            # if pertubation is not None:
+            #     pertubation = torch.cat([torch.zeros_like(pertubation), pertubation], dim=0)
             record_all_label_data, local_objectness, local_matrix = self.model(
-                all_label_data, branch="supervised", ret_confusion_matrix=True, pertubation=pertubation_label
+                all_label_data, branch="supervised", ret_confusion_matrix=True
             )
             record_dict.update(record_all_label_data)
             #  2. calculate the EMA of confusion matrix
@@ -712,11 +711,11 @@ class TATeacherTrainer(ATeacherTrainer):
 
             #  5. conduct targeted attack on unlabel_data_q
             adversarial_pseudo_labels = pseudo_proposals_roih_unsup_k
-            pertubation_unlabel_k, _, _ = self.model_teacher(unlabel_data_k, branch="attack")
-            pertubation_unlabel_k *= self.cfg.SEMISUPNET.ATTACK_SEVERITY
-            if pertubation_unlabel_k.any():
+            pertubation_k, _, _ = self.model_teacher(unlabel_data_k, branch="attack")
+            pertubation_k *= self.cfg.SEMISUPNET.ATTACK_SEVERITY
+            if pertubation_k.any():
                 with torch.no_grad():
-                    proposals_roih_attacked_k, _, _ = self.model_teacher(unlabel_data_k, branch="unsup_data_weak", pertubation=pertubation_unlabel_k)
+                    proposals_roih_attacked_k, _, _ = self.model_teacher(unlabel_data_k, branch="unsup_data_weak", pertubation=pertubation_k)
                 # torch.save(proposals_roih_attacked_k, "attacked_pseudo_labels.pt")
                 pseudo_proposals_roih_attacked_k, _ = self.process_pseudo_label(
                     proposals_roih_attacked_k, cur_threshold, "roih", "thresholding"
