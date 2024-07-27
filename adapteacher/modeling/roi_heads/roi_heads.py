@@ -368,6 +368,7 @@ class FgPseudoROIHeads(StandardROIHeads):
             gt_classes[matched_labels == -1] = -1
             if has_weights:
                 gt_weights = gt_weights[matched_idxs]
+                gt_weights[matched_labels == 0] = 1
 
         else:
             gt_classes = torch.zeros_like(matched_idxs) + self.num_classes
