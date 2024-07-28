@@ -736,7 +736,7 @@ class TATeacherTrainer(ATeacherTrainer):
             )
             unlabel_data_q = self.remove_cutout_objects(unlabel_data_k, unlabel_data_q)
             unlabel_data_q_copied = self.remove_cutout_objects(unlabel_data_k, unlabel_data_q_copied)
-            unlabel_data_q, unlabel_data_q_copied = self.resize(unlabel_data_q, unlabel_data_q_copied)
+            # unlabel_data_q, unlabel_data_q_copied = self.resize(unlabel_data_q, unlabel_data_q_copied)
             # unlabel_data_q, unlabel_data_q_copied = self.add_weights(unlabel_data_q, unlabel_data_q_copied)
             #  6. input strongly augmented unlabeled data into model
             all_unlabel_data = unlabel_data_q + unlabel_data_q_copied
