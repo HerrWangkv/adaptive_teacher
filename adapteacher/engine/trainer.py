@@ -656,7 +656,7 @@ class TATeacherTrainer(ATeacherTrainer):
         ) % self.cfg.SEMISUPNET.TEACHER_UPDATE_ITER == 0:
             self._update_teacher_model(keep_rate=self.cfg.SEMISUPNET.EMA_KEEP_RATE)
 
-        label_data_q = self.remove_cutout_objects(label_data_k, label_data_q)
+        # label_data_q = self.remove_cutout_objects(label_data_k, label_data_q)
         if self.iter < self.cfg.SEMISUPNET.BURN_UP_STEP:
 
             # input both strong and weak supervised data into model
@@ -734,8 +734,8 @@ class TATeacherTrainer(ATeacherTrainer):
             unlabel_data_q_copied = self.add_label(
                 unlabel_data_q_copied, adversarial_pseudo_labels
             )
-            unlabel_data_q = self.remove_cutout_objects(unlabel_data_k, unlabel_data_q)
-            unlabel_data_q_copied = self.remove_cutout_objects(unlabel_data_k, unlabel_data_q_copied)
+            # unlabel_data_q = self.remove_cutout_objects(unlabel_data_k, unlabel_data_q)
+            # unlabel_data_q_copied = self.remove_cutout_objects(unlabel_data_k, unlabel_data_q_copied)
             # unlabel_data_q, unlabel_data_q_copied = self.resize(unlabel_data_q, unlabel_data_q_copied)
             # unlabel_data_q, unlabel_data_q_copied = self.add_weights(unlabel_data_q, unlabel_data_q_copied)
             #  6. input strongly augmented unlabeled data into model
