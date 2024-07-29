@@ -734,20 +734,25 @@ class TATeacherTrainer(ATeacherTrainer):
             unlabel_data_q_copied = self.add_label(
                 unlabel_data_q_copied, adversarial_pseudo_labels
             )
-            # unlabel_data_q = self.remove_cutout_objects(unlabel_data_k, unlabel_data_q)
-            # unlabel_data_q_copied = self.remove_cutout_objects(unlabel_data_k, unlabel_data_q_copied)
-            # unlabel_data_q, unlabel_data_q_copied = self.resize(unlabel_data_q, unlabel_data_q_copied)
-            # unlabel_data_q, unlabel_data_q_copied = self.add_weights(unlabel_data_q, unlabel_data_q_copied)
             #  6. input strongly augmented unlabeled data into model
-            all_unlabel_data = unlabel_data_q + unlabel_data_q_copied
             record_all_unlabel_data, _, _ = self.model(
-                all_unlabel_data, branch="supervised_target"
+                unlabel_data_q, branch="supervised_target"
             )   
             new_record_all_unlabel_data = {}
             for key in record_all_unlabel_data.keys():
-                new_record_all_unlabel_data[key + "_pseudo"] = record_all_unlabel_data[
-                    key
-                ]
+                new_record_all_unlabel_data[key + "_pseudo"] = record_all_unlabel_data[key]
+
+            if (pseudo_proposals_roih_unsup_k != adversarial_pseudo_labels):
+                unlabel_data_q = self.remove_label(unlabel_data_q)
+                unlabel_data_q = self.add_label(
+                    unlabel_data_q, adversarial_pseudo_labels
+                )
+                record_all_unlabel_data_adv, _, _ = self.model(
+                    unlabel_data_q, branch="supervised_target"
+                )   
+                for key in record_all_unlabel_data_adv.keys():
+                    new_record_all_unlabel_data[key + "_pseudo"] = 0.7 * new_record_all_unlabel_data[key + "_pseudo"] + 0.3 * record_all_unlabel_data_adv[key]
+            
             record_dict.update(new_record_all_unlabel_data)
 
             #  7. input weakly labeled data (source) and weakly unlabeled data (target) to student model
