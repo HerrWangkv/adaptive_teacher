@@ -750,8 +750,9 @@ class TATeacherTrainer(ATeacherTrainer):
                 record_all_unlabel_data_adv, _, _ = self.model(
                     unlabel_data_q, branch="supervised_target"
                 )   
+                lambda_reg = 0.5 - 0.5 * (self.iter - self.cfg.SEMISUPNET.BURN_UP_STEP) / (self.max_iter - self.cfg.SEMISUPNET.BURN_UP_STEP)
                 for key in record_all_unlabel_data_adv.keys():
-                    new_record_all_unlabel_data[key + "_pseudo"] = 0.7 * new_record_all_unlabel_data[key + "_pseudo"] + 0.3 * record_all_unlabel_data_adv[key]
+                    new_record_all_unlabel_data[key + "_pseudo"] = (1 - lambda_reg) * new_record_all_unlabel_data[key + "_pseudo"] + lambda_reg * record_all_unlabel_data_adv[key]
             
             record_dict.update(new_record_all_unlabel_data)
 
