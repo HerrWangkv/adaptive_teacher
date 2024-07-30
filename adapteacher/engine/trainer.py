@@ -681,11 +681,12 @@ class TATeacherTrainer(ATeacherTrainer):
             self.update_attack_mask_and_weight()
 
             #  1. input both strongly and weakly augmented labeled data into student model
+            pertubation_label_k, _, _ = self.model_teacher(label_data_k, branch="attack")
+            pertubation_label_k *= self.cfg.SEMISUPNET.ATTACK_SEVERITY
             all_label_data = label_data_k + label_data_q
-            # if pertubation is not None:
-            #     pertubation = torch.cat([torch.zeros_like(pertubation), pertubation], dim=0)
-            record_all_label_data, local_objectness, local_matrix = self.model(
-                all_label_data, branch="supervised", ret_confusion_matrix=True
+            pertubation_label = torch.cat([pertubation_label_k, torch.zeros_like(pertubation_label_k)], dim=0)
+            record_all_label_data, _, local_matrix = self.model(
+                all_label_data, branch="supervised", ret_confusion_matrix=True, pertubation=pertubation_label
             )
             record_dict.update(record_all_label_data)
             #  2. calculate the EMA of confusion matrix
