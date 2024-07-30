@@ -43,6 +43,7 @@ from adapteacher.evaluation import PascalVOCDetectionEvaluator, COCOEvaluator
 
 from .probe import OpenMatchTrainerProbe
 import copy
+import math
 
 # Adaptive Teacher Trainer
 class ATeacherTrainer(DefaultTrainer):
@@ -643,8 +644,9 @@ class TATeacherTrainer(ATeacherTrainer):
         # data_q and data_k from different augmentations (q:strong, k:weak)
         # label_strong, label_weak, unlabed_strong, unlabled_weak
         label_data_q, label_data_k, unlabel_data_q, unlabel_data_k = data
-        # if 3 not in unlabel_data_k[0]["instances"].gt_classes:
-        #     return
+        label_data_q = self.add_cutout(label_data_q)
+        label_data_q = self.remove_cutout_objects(label_data_q)
+        unlabel_data_q = self.add_cutout(unlabel_data_q)
         data_time = time.perf_counter() - start
 
         # burn-in stage (supervised training with labeled data)
@@ -656,12 +658,11 @@ class TATeacherTrainer(ATeacherTrainer):
         ) % self.cfg.SEMISUPNET.TEACHER_UPDATE_ITER == 0:
             self._update_teacher_model(keep_rate=self.cfg.SEMISUPNET.EMA_KEEP_RATE)
 
-        # label_data_q = self.remove_cutout_objects(label_data_k, label_data_q)
         if self.iter < self.cfg.SEMISUPNET.BURN_UP_STEP:
 
             # input both strong and weak supervised data into model
             label_data_q.extend(label_data_k)
-            record_dict, local_objectness, local_matrix = self.model(label_data_q, branch="supervised", ret_confusion_matrix=True)
+            record_dict, _, local_matrix = self.model(label_data_q, branch="supervised", ret_confusion_matrix=True)
             self.update_confusion_matrix(local_matrix)
 
             # weight losses
@@ -705,7 +706,6 @@ class TATeacherTrainer(ATeacherTrainer):
             unlabel_data_k = self.add_label(
                 unlabel_data_k, pseudo_proposals_roih_unsup_k
             )
-            unlabel_data_q_copied = copy.deepcopy(unlabel_data_q)
             unlabel_data_q = self.add_label(
                 unlabel_data_q, pseudo_proposals_roih_unsup_k
             )
@@ -731,11 +731,8 @@ class TATeacherTrainer(ATeacherTrainer):
                 #     torch.save(pseudo_proposals_roih_attacked_k, f"0/attacked_pseudo_labels.pt")
                 #     torch.save(adversarial_pseudo_labels, f"0/adversarial_pseudo_labels.pt")
                 #     breakpoint()
-                
-            unlabel_data_q_copied = self.add_label(
-                unlabel_data_q_copied, adversarial_pseudo_labels
-            )
             #  6. input strongly augmented unlabeled data into model
+            unlabel_data_q = self.remove_cutout_objects(unlabel_data_q)
             record_all_unlabel_data, _, _ = self.model(
                 unlabel_data_q, branch="supervised_target"
             )   
@@ -748,12 +745,12 @@ class TATeacherTrainer(ATeacherTrainer):
                 unlabel_data_q = self.add_label(
                     unlabel_data_q, adversarial_pseudo_labels
                 )
+                unlabel_data_q = self.remove_cutout_objects(unlabel_data_q)
                 record_all_unlabel_data_adv, _, _ = self.model(
                     unlabel_data_q, branch="supervised_target"
-                )   
-                lambda_reg = 0.5 - 0.5 * (self.iter - self.cfg.SEMISUPNET.BURN_UP_STEP) / (self.max_iter - self.cfg.SEMISUPNET.BURN_UP_STEP)
+                )
                 for key in record_all_unlabel_data_adv.keys():
-                    new_record_all_unlabel_data[key + "_pseudo"] = (1 - lambda_reg) * new_record_all_unlabel_data[key + "_pseudo"] + lambda_reg * record_all_unlabel_data_adv[key]
+                    new_record_all_unlabel_data[key + "_pseudo"] = 0.5 * new_record_all_unlabel_data[key + "_pseudo"] + 0.5 * record_all_unlabel_data_adv[key]
             
             record_dict.update(new_record_all_unlabel_data)
 
@@ -941,10 +938,42 @@ class TATeacherTrainer(ATeacherTrainer):
                 ].gt_boxes.tensor
                 data_copied[i]["instances"].gt_classes = data_copied[i]["instances"].gt_classes
         return data, data_copied
+    
+    def erase(self, img_c, img_h, img_w, p, scale, ratio, mask):
+        if torch.rand(1) < p:
+            area = img_h * img_w
+            log_ratio = torch.log(torch.tensor(ratio))
+            for _ in range(10):
+                erase_area = area * torch.empty(1).uniform_(scale[0], scale[1]).item()
+                aspect_ratio = torch.exp(torch.empty(1).uniform_(log_ratio[0], log_ratio[1])).item()
 
-    def remove_cutout_objects(self, data_k, data_q):
-        for image_index in range(len(data_k)):
+                h = int(round(math.sqrt(erase_area * aspect_ratio)))
+                w = int(round(math.sqrt(erase_area / aspect_ratio)))
+                if not (h < img_h and w < img_w):
+                    continue
+
+                i = torch.randint(0, img_h - h + 1, size=(1,)).item()
+                j = torch.randint(0, img_w - w + 1, size=(1,)).item()
+                mask[i : i + h, j : j + w] = 1
+                return mask
+        return mask
+
+    def add_cutout(self, data_q):
+        for i in range(len(data_q)):
+            cutout_mask = torch.zeros(data_q[i]["image"].shape[-2:], dtype=torch.bool)
+            c, h, w = data_q[i]["image"].shape
+            cutout_mask = self.erase(c, h, w, 0.7, [0.05, 0.5], [0.3, 3.3], cutout_mask)
+            cutout_mask = self.erase(c, h, w, 0.5, [0.02, 0.2], [0.1, 6], cutout_mask)
+            cutout_mask = self.erase(c, h, w, 0.3, [0.02, 0.2], [0.05, 8], cutout_mask)
+            noise = torch.randint(0, 255, data_q[i]["image"].shape, dtype=torch.uint8)
+            data_q[i]["image"][cutout_mask.expand(3,-1,-1)] = noise[cutout_mask.expand(3,-1,-1)]
+            data_q[i]["cutout_mask"] = cutout_mask
+        return data_q
+
+    def remove_cutout_objects(self, data_q):
+        for image_index in range(len(data_q)):
             boxes = data_q[image_index]['instances'].gt_boxes.tensor
+            cutout_mask = data_q[image_index]['cutout_mask']
         if len(boxes):
             valid_mask = torch.ones(len(boxes), dtype=torch.bool)
             for i in range(boxes.shape[0]):
@@ -953,11 +982,9 @@ class TATeacherTrainer(ATeacherTrainer):
                 y1 = box_i[1]
                 x2 = box_i[2]
                 y2 = box_i[3]
-                image_q_patch = data_q[image_index]['image'][:, y1:y2, x1:x2].to(torch.float)
-                image_k_patch = data_k[image_index]['image'][:, y1:y2, x1:x2].to(torch.float)
-                diff = (image_q_patch - image_k_patch).absolute().flatten()
-                ratio = (diff > 40).sum() / diff.numel()
-                if ratio > 0.5:
+                cutout_area = cutout_mask[y1:y2, x1:x2].sum()
+                ratio = cutout_area / ((y2 - y1) * (x2 - x1))
+                if ratio > 0.8:
                     valid_mask[i] = False
             new_instance = Instances(data_q[image_index]['image'].shape[-2:])
             new_instance.gt_boxes = Boxes(boxes[valid_mask])
