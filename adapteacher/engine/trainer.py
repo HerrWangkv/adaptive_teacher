@@ -709,49 +709,50 @@ class TATeacherTrainer(ATeacherTrainer):
             unlabel_data_q = self.add_label(
                 unlabel_data_q, pseudo_proposals_roih_unsup_k
             )
-
-            #  5. conduct targeted attack on unlabel_data_q
-            adversarial_pseudo_labels = pseudo_proposals_roih_unsup_k
-            pertubation_k, _, _ = self.model_teacher(unlabel_data_k, branch="attack")
-            pertubation_k *= self.cfg.SEMISUPNET.ATTACK_SEVERITY
-            if pertubation_k.any():
-                with torch.no_grad():
-                    proposals_roih_attacked_k, _, _ = self.model_teacher(unlabel_data_k, branch="unsup_data_weak", pertubation=pertubation_k)
-                # torch.save(proposals_roih_attacked_k, "attacked_pseudo_labels.pt")
-                pseudo_proposals_roih_attacked_k, _ = self.process_pseudo_label(
-                    proposals_roih_attacked_k, cur_threshold, "roih", "thresholding"
-                )
-                adversarial_pseudo_labels = self.generate_adversarial_pseudo_labels(pseudo_proposals_roih_unsup_k, pseudo_proposals_roih_attacked_k)
-                # if len(pseudo_proposals_roih_attacked_k[0].gt_classes) != len(adversarial_pseudo_labels[0].gt_classes):
-                # # if 3 in pseudo_proposals_roih_attacked_k[0].gt_classes:
-                #     print(pseudo_proposals_roih_attacked_k[0].gt_classes)
-                #     print(adversarial_pseudo_labels[0].gt_classes)
-                #     torch.save(gt_labels, "0/gt_labels.pt")
-                #     torch.save(unlabel_data_k, "0/unlabel_data_k_pseudo.pt")
-                #     torch.save(pseudo_proposals_roih_attacked_k, f"0/attacked_pseudo_labels.pt")
-                #     torch.save(adversarial_pseudo_labels, f"0/adversarial_pseudo_labels.pt")
-                #     breakpoint()
-            #  6. input strongly augmented unlabeled data into model
             unlabel_data_q = self.remove_cutout_objects(unlabel_data_q)
+            #  6. input strongly augmented unlabeled data into model
             record_all_unlabel_data, _, _ = self.model(
                 unlabel_data_q, branch="supervised_target"
             )   
             new_record_all_unlabel_data = {}
             for key in record_all_unlabel_data.keys():
                 new_record_all_unlabel_data[key + "_pseudo"] = record_all_unlabel_data[key]
+            #  5. conduct targeted attack on unlabel_data_q
+            if self.cfg.SEMISUPNET.PSEUDO_LABEL_REG:
+                adversarial_pseudo_labels = pseudo_proposals_roih_unsup_k
+                pertubation_k, _, _ = self.model_teacher(unlabel_data_k, branch="attack")
+                pertubation_k *= self.cfg.SEMISUPNET.ATTACK_SEVERITY
+                if pertubation_k.any():
+                    with torch.no_grad():
+                        proposals_roih_attacked_k, _, _ = self.model_teacher(unlabel_data_k, branch="unsup_data_weak", pertubation=pertubation_k)
+                    # torch.save(proposals_roih_attacked_k, "attacked_pseudo_labels.pt")
+                    pseudo_proposals_roih_attacked_k, _ = self.process_pseudo_label(
+                        proposals_roih_attacked_k, cur_threshold, "roih", "thresholding"
+                    )
+                    adversarial_pseudo_labels = self.generate_adversarial_pseudo_labels(pseudo_proposals_roih_unsup_k, pseudo_proposals_roih_attacked_k)
+                    # if len(pseudo_proposals_roih_attacked_k[0].gt_classes) != len(adversarial_pseudo_labels[0].gt_classes):
+                    # # if 3 in pseudo_proposals_roih_attacked_k[0].gt_classes:
+                    #     print(pseudo_proposals_roih_attacked_k[0].gt_classes)
+                    #     print(adversarial_pseudo_labels[0].gt_classes)
+                    #     torch.save(gt_labels, "0/gt_labels.pt")
+                    #     torch.save(unlabel_data_k, "0/unlabel_data_k_pseudo.pt")
+                    #     torch.save(pseudo_proposals_roih_attacked_k, f"0/attacked_pseudo_labels.pt")
+                    #     torch.save(adversarial_pseudo_labels, f"0/adversarial_pseudo_labels.pt")
+                    #     breakpoint()
+                
 
-            if (pseudo_proposals_roih_unsup_k != adversarial_pseudo_labels):
-                unlabel_data_q = self.remove_label(unlabel_data_q)
-                unlabel_data_q = self.add_label(
-                    unlabel_data_q, adversarial_pseudo_labels
-                )
-                unlabel_data_q = self.remove_cutout_objects(unlabel_data_q)
-                record_all_unlabel_data_adv, _, _ = self.model(
-                    unlabel_data_q, branch="supervised_target"
-                )
-                for key in record_all_unlabel_data_adv.keys():
-                    new_record_all_unlabel_data[key + "_pseudo"] = 0.5 * new_record_all_unlabel_data[key + "_pseudo"] + 0.5 * record_all_unlabel_data_adv[key]
-            
+                if (pseudo_proposals_roih_unsup_k != adversarial_pseudo_labels):
+                    unlabel_data_q = self.remove_label(unlabel_data_q)
+                    unlabel_data_q = self.add_label(
+                        unlabel_data_q, adversarial_pseudo_labels
+                    )
+                    unlabel_data_q = self.remove_cutout_objects(unlabel_data_q)
+                    record_all_unlabel_data_adv, _, _ = self.model(
+                        unlabel_data_q, branch="supervised_target"
+                    )
+                    for key in record_all_unlabel_data_adv.keys():
+                        new_record_all_unlabel_data[key + "_pseudo"] = 0.5 * new_record_all_unlabel_data[key + "_pseudo"] + 0.5 * record_all_unlabel_data_adv[key]
+                
             record_dict.update(new_record_all_unlabel_data)
 
             #  7. input weakly labeled data (source) and weakly unlabeled data (target) to student model
