@@ -896,7 +896,7 @@ class TATeacherTrainer(ATeacherTrainer):
             if self.cfg.SEMISUPNET.PASTE_MINORITY:
                 for j in range(len(valid_mask)):
                     if attacked_classes[j] == initial_attacked_classes[j] and ~self.major_mask[attacked_classes[j]]:
-                        box_j = pseudo_boxes.tensor[j].to(torch.int)
+                        box_j = attacked_boxes.tensor[j].to(torch.int)
                         x1 = box_j[0]
                         y1 = box_j[1]
                         x2 = box_j[2]
@@ -973,7 +973,7 @@ class TATeacherTrainer(ATeacherTrainer):
                 j = torch.randint(0, img_w - w + 1, size=(1,)).item()
                 mask[i : i + h, j : j + w] = 1
                 if max_rect is None or h * w > max_rect[2] * max_rect[3]:
-                    max_rect = [i + h / 2, j + w / 2, h, w]
+                    max_rect = torch.tensor([i + h / 2, j + w / 2, h, w])
                 return mask, max_rect
         return mask, max_rect
 
