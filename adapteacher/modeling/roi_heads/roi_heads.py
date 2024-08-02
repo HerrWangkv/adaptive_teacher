@@ -287,7 +287,7 @@ class FgPseudoROIHeads(StandardROIHeads):
         self, proposals: List[Instances], targets: List[Instances]
     ) -> List[Instances]:
         """
-        Add gt_scores to proposals if necessary
+        Add gt_weights to proposals if necessary
         """
         # Augment proposals with ground-truth boxes.
         # In the case of learned proposals (e.g., RPN), when training starts
@@ -313,16 +313,16 @@ class FgPseudoROIHeads(StandardROIHeads):
                 targets_per_image.gt_boxes, proposals_per_image.proposal_boxes
             )
             matched_idxs, matched_labels = self.proposal_matcher(match_quality_matrix)
-            gt_scores = targets_per_image.gt_scores if "gt_scores" in targets_per_image._fields else None
-            sampled_idxs, gt_classes, gt_scores = self._sample_proposals(
-                matched_idxs, matched_labels, targets_per_image.gt_classes, gt_scores=gt_scores
+            gt_weights = targets_per_image.gt_weights if "gt_weights" in targets_per_image._fields else None
+            sampled_idxs, gt_classes, gt_weights = self._sample_proposals(
+                matched_idxs, matched_labels, targets_per_image.gt_classes, gt_weights=gt_weights
             )
 
             # Set target attributes of the sampled proposals:
             proposals_per_image = proposals_per_image[sampled_idxs]
             proposals_per_image.gt_classes = gt_classes
-            if gt_scores is not None:
-                proposals_per_image.gt_scores = gt_scores
+            if gt_weights is not None:
+                proposals_per_image.gt_weights = gt_weights
 
             if has_gt:
                 sampled_targets = matched_idxs[sampled_idxs]
@@ -351,14 +351,14 @@ class FgPseudoROIHeads(StandardROIHeads):
         return proposals_with_gt
 
     def _sample_proposals(
-        self, matched_idxs: torch.Tensor, matched_labels: torch.Tensor, gt_classes: torch.Tensor, gt_scores=None
+        self, matched_idxs: torch.Tensor, matched_labels: torch.Tensor, gt_classes: torch.Tensor, gt_weights=None
     ) -> Tuple[torch.Tensor, torch.Tensor]:
         """
-        add gt_scores if necessary
+        add gt_weights if necessary
         """
         has_gt = gt_classes.numel() > 0
-        ret_scores = gt_scores is not None
-        has_scores = ret_scores and has_gt
+        ret_weights = gt_weights is not None
+        has_weights = ret_weights and has_gt
         # Get the corresponding GT for each proposal
         if has_gt:
             gt_classes = gt_classes[matched_idxs]
@@ -366,21 +366,18 @@ class FgPseudoROIHeads(StandardROIHeads):
             gt_classes[matched_labels == 0] = self.num_classes
             # Label ignore proposals (-1 label)
             gt_classes[matched_labels == -1] = -1
-            if has_scores:
-                gt_scores = gt_scores[matched_idxs]
-                gt_scores[matched_labels == 0] *= 0
-                gt_scores[matched_labels == 0, -1] = 1
-
+            if has_weights:
+                gt_weights = gt_weights[matched_idxs]
+                gt_weights[matched_labels == 0] = 1
 
         else:
             gt_classes = torch.zeros_like(matched_idxs) + self.num_classes
-            if ret_scores:
-                gt_scores = torch.zeros([matched_idxs, self.num_classes + 1])
-                gt_scores[:, -1] = 1
+            if ret_weights:
+                gt_weights = torch.ones_like(matched_idxs)
 
         sampled_fg_idxs, sampled_bg_idxs = subsample_labels(
             gt_classes, self.batch_size_per_image, self.positive_fraction, self.num_classes
         )
 
         sampled_idxs = torch.cat([sampled_fg_idxs, sampled_bg_idxs], dim=0)
-        return sampled_idxs, gt_classes[sampled_idxs], gt_scores[sampled_idxs] if ret_scores else None
+        return sampled_idxs, gt_classes[sampled_idxs], gt_weights[sampled_idxs] if ret_weights else None

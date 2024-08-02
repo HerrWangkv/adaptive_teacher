@@ -25,11 +25,11 @@ class FgFastRCNNOutputLayers(FastRCNNOutputLayers):
             else torch.empty(0)
         )
 
-        gt_scores = (
-            cat([p.gt_scores for p in proposals], dim=0)
+        gt_weights = (
+            cat([p.gt_weights for p in proposals], dim=0)
             if len(proposals)
             else torch.empty(0)
-        ) if "gt_scores" in proposals[0]._fields else None
+        ) if "gt_weights" in proposals[0]._fields else None
 
         _log_classification_stats(scores, gt_classes)
 
@@ -73,10 +73,10 @@ class FgFastRCNNOutputLayers(FastRCNNOutputLayers):
                 loss_cls = cross_entropy(scores[mask], gt_classes[mask], reduction="mean")
         else:
             assert attack_mask is None
-            if gt_scores is not None:
+            if gt_weights is not None:
                 assert branch == "supervised_target"
-                loss_cls = torch.sum(-torch.log_softmax(scores, dim=1) * gt_scores, dim=1)
-                loss_cls = torch.mean(loss_cls)
+                loss_cls = cross_entropy(scores, gt_classes, reduction="none")
+                loss_cls = torch.mean(loss_cls * gt_weights)
             else:
                 loss_cls = cross_entropy(scores, gt_classes, reduction="mean")
             # else:

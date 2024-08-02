@@ -895,15 +895,15 @@ class TATeacherTrainer(ATeacherTrainer):
             valid_mask[torch.logical_and(indices==-1, self.major_mask[attacked_classes])] = False
             if self.cfg.SEMISUPNET.PASTE_MINORITY:
                 for j in range(len(valid_mask)):
-                    if attacked_classes[j] == initial_attacked_classes[j]:# and ~self.major_mask[attacked_classes[j]]:
+                    if attacked_classes[j] == initial_attacked_classes[j] and ~self.major_mask[attacked_classes[j]]:
                         box_j = attacked_boxes.tensor[j].to(torch.int)
                         x1 = box_j[0]
                         y1 = box_j[1]
                         x2 = box_j[2]
                         y2 = box_j[3]
                         self.crop_bank[attacked_classes[j]].append(unlabel_data_k[i]["image"][:, y1:y2, x1:x2])
-                        if len(self.crop_bank[attacked_classes[j]]) > 50:
-                            self.crop_bank[attacked_classes[j]] = self.crop_bank[attacked_classes[j]][-50:]
+                        if len(self.crop_bank[attacked_classes[j]]) > 10:
+                            self.crop_bank[attacked_classes[j]].pop(0)
             # weights = self.attack_weight[attacked_classes[valid_mask], initial_attacked_classes[valid_mask]]
             new_proposal_inst_adversarial.gt_boxes = Boxes(attacked_boxes.tensor[valid_mask])
             new_proposal_inst_adversarial.gt_classes = attacked_classes[valid_mask]
@@ -1031,44 +1031,33 @@ class TATeacherTrainer(ATeacherTrainer):
     
     def paste_minority(self, unlabel_data_q):
         for i in range(len(unlabel_data_q)):
-            c1 = torch.randint(self.num_classes, size=(1,)) # all
-            c2 = torch.randint(self.num_classes, size=(1,)) # minor
-            while self.major_mask[c2] or c1 == c2:
-                c2 = torch.randint(self.num_classes, size=(1,))
-            if unlabel_data_q[i]["max_rect"] is None or len(self.crop_bank[c1])  == 0 or len(self.crop_bank[c2])  == 0:
+            c = torch.randint(len(self.major_mask), size=(1,))
+            while self.major_mask[c]:
+                c = torch.randint(len(self.major_mask), size=(1,))
+            if unlabel_data_q[i]["max_rect"] is None or len(self.crop_bank[c]) == 0:
                 continue
             y_center, x_center, h, w = unlabel_data_q[i]["max_rect"]
             
-            crop1 = self.crop_bank[c1][random.randint(0, len(self.crop_bank[c1]) - 1)]
-            crop2 = self.crop_bank[c2][random.randint(0, len(self.crop_bank[c2]) - 1)]
-            # if h/w < 3/4 * crop.shape[-2]/crop.shape[-1]:
-            #     w = h * (4/3*crop.shape[-1] / crop.shape[-2])
-            # elif h/w > 4/3 * crop.shape[-2]/crop.shape[-1]:
-            #     h = w * (4/3*crop.shape[-2] / crop.shape[-1])
-            ratio = random.uniform(0.2, 0.8)
+            crop = self.crop_bank[c][random.randint(0, len(self.crop_bank[c]) - 1)]
+            if h/w < 3/4 * crop.shape[-2]/crop.shape[-1]:
+                w = h * (4/3*crop.shape[-1] / crop.shape[-2])
+            elif h/w > 4/3 * crop.shape[-2]/crop.shape[-1]:
+                h = w * (4/3*crop.shape[-2] / crop.shape[-1])
+            ratio = random.uniform(0.2, 1.0)
             h *= ratio
             w *= ratio
             y1, y2 = int(y_center - h/2), int(y_center + h/2)
             x1, x2 = int(x_center - w/2), int(x_center + w/2)
-            unlabel_data_q[i]["image"][:, y1:y2, x1:x2] = 0.5 * F.interpolate(
-                crop1.unsqueeze(0).float(),
-                size=(y2-y1, x2-x1),
-                align_corners=False,
-                mode="bilinear",
-            ).squeeze(0) + 0.5 * F.interpolate(
-                crop2.unsqueeze(0).float(),
+            noise_ratio = random.uniform(0., 0.2)
+            unlabel_data_q[i]["image"][:, y1:y2, x1:x2] = noise_ratio * unlabel_data_q[i]["image"][:, y1:y2, x1:x2].float() + (1 - noise_ratio) * F.interpolate(
+                crop.unsqueeze(0).float(),
                 size=(y2-y1, x2-x1),
                 align_corners=False,
                 mode="bilinear",
             ).squeeze(0)
             unlabel_data_q[i]["image"] = unlabel_data_q[i]["image"].byte()
             unlabel_data_q[i]["instances"].gt_boxes.tensor = torch.cat([unlabel_data_q[i]["instances"].gt_boxes.tensor, torch.tensor([[x1, y1, x2, y2]], dtype=torch.float)], dim=0)
-            gt_scores = torch.zeros([len(unlabel_data_q[i]["instances"].gt_classes) + 1, self.num_classes+1], dtype=torch.float)
-            gt_scores[range(len(unlabel_data_q[i]["instances"].gt_classes)), unlabel_data_q[i]["instances"].gt_classes] = 1
-            gt_scores[-1, c1] = 0.5
-            gt_scores[-1, c2] = 0.5
-            unlabel_data_q[i]["instances"].gt_classes = torch.cat([unlabel_data_q[i]["instances"].gt_classes, torch.tensor([c2], dtype=torch.long)])
-            unlabel_data_q[i]["instances"].gt_scores = gt_scores
+            unlabel_data_q[i]["instances"].gt_classes = torch.cat([unlabel_data_q[i]["instances"].gt_classes, torch.tensor([c], dtype=torch.long)])
             # torch.save(unlabel_data_q, "unlabel_data_q.pt")
             # breakpoint()
         return unlabel_data_q
