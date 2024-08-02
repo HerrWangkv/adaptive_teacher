@@ -1036,9 +1036,6 @@ class TATeacherTrainer(ATeacherTrainer):
             while self.major_mask[c2] or c1 == c2:
                 c2 = torch.randint(self.num_classes, size=(1,))
             if unlabel_data_q[i]["max_rect"] is None or len(self.crop_bank[c1])  == 0 or len(self.crop_bank[c2])  == 0:
-                gt_scores = torch.zeros([len(unlabel_data_q[i]["instances"].gt_classes), self.num_classes+1], dtype=torch.float)
-                gt_scores[range(len(unlabel_data_q[i]["instances"].gt_classes)), unlabel_data_q[i]["instances"].gt_classes] = 1
-                unlabel_data_q[i]["instances"].gt_scores = gt_scores
                 continue
             y_center, x_center, h, w = unlabel_data_q[i]["max_rect"]
             
