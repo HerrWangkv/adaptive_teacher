@@ -375,7 +375,7 @@ class FgPseudoROIHeads(StandardROIHeads):
         else:
             gt_classes = torch.zeros_like(matched_idxs) + self.num_classes
             if ret_scores:
-                gt_scores = torch.zeros([matched_idxs, self.num_classes + 1])
+                gt_scores = torch.zeros([len(matched_idxs), self.num_classes + 1]).to(matched_idxs.device)
                 gt_scores[:, -1] = 1
 
         sampled_fg_idxs, sampled_bg_idxs = subsample_labels(
