@@ -1043,15 +1043,19 @@ class TATeacherTrainer(ATeacherTrainer):
                 w = h * (4/3*crop.shape[-1] / crop.shape[-2])
             elif h/w > 4/3 * crop.shape[-2]/crop.shape[-1]:
                 h = w * (4/3*crop.shape[-2] / crop.shape[-1])
+            ratio = random.uniform(0.2, 1.0)
+            h *= ratio
+            w *= ratio
             y1, y2 = int(y_center - h/2), int(y_center + h/2)
             x1, x2 = int(x_center - w/2), int(x_center + w/2)
-
-            unlabel_data_q[i]["image"][:, y1:y2, x1:x2] = F.interpolate(
+            noise_ratio = random.uniform(0., 0.2)
+            unlabel_data_q[i]["image"][:, y1:y2, x1:x2] = noise_ratio * unlabel_data_q[i]["image"][:, y1:y2, x1:x2].float() + (1 - noise_ratio) * F.interpolate(
                 crop.unsqueeze(0).float(),
                 size=(y2-y1, x2-x1),
                 align_corners=False,
                 mode="bilinear",
             ).squeeze(0)
+            unlabel_data_q[i]["image"] = unlabel_data_q[i]["image"].byte()
             unlabel_data_q[i]["instances"].gt_boxes.tensor = torch.cat([unlabel_data_q[i]["instances"].gt_boxes.tensor, torch.tensor([[x1, y1, x2, y2]], dtype=torch.float)], dim=0)
             unlabel_data_q[i]["instances"].gt_classes = torch.cat([unlabel_data_q[i]["instances"].gt_classes, torch.tensor([c], dtype=torch.long)])
             # torch.save(unlabel_data_q, "unlabel_data_q.pt")
