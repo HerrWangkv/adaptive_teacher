@@ -902,7 +902,7 @@ class TATeacherTrainer(ATeacherTrainer):
                         x2 = box_j[2]
                         y2 = box_j[3]
                         self.crop_bank[attacked_classes[j]].append(unlabel_data_k[i]["image"][:, y1:y2, x1:x2])
-                        if len(self.crop_bank[attacked_classes[j]]) > 10:
+                        if len(self.crop_bank[attacked_classes[j]]) > 50:
                             self.crop_bank[attacked_classes[j]].pop(0)
             # weights = self.attack_weight[attacked_classes[valid_mask], initial_attacked_classes[valid_mask]]
             new_proposal_inst_adversarial.gt_boxes = Boxes(attacked_boxes.tensor[valid_mask])
