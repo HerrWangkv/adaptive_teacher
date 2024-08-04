@@ -11,6 +11,7 @@ from fvcore.nn.precise_bn import get_bn_modules
 import numpy as np
 import random
 from collections import OrderedDict
+import torchvision.transforms as transforms
 
 import detectron2.utils.comm as comm
 from detectron2.checkpoint import DetectionCheckpointer
@@ -597,6 +598,12 @@ class TATeacherTrainer(ATeacherTrainer):
         self.model.apply(inplace_relu)
         self.model_teacher.apply(inplace_relu)
         self.crop_bank = [[] for c in range(self.num_classes)]
+        augmentation = []
+        augmentation.append(
+            transforms.RandomApply([transforms.ColorJitter(0.4, 0.4, 0.4, 0.1)], p=0.8)
+        )
+        augmentation.append(transforms.RandomGrayscale(p=0.2))
+        self.augmentation = transforms.Compose(augmentation)
 
     def threshold_bbox(self, proposal_bbox_inst, thres=0.7, proposal_type="roih"):
         if proposal_type == "rpn":
@@ -956,7 +963,7 @@ class TATeacherTrainer(ATeacherTrainer):
                 data_copied[i]["instances"].gt_classes = data_copied[i]["instances"].gt_classes
         return data, data_copied
     
-    def erase(self, img_h, img_w, p, scale, ratio, mask, rects):
+    def erase(self, img_h, img_w, p, scale, ratio, mask, max_rect):
         if torch.rand(1) < p:
             area = img_h * img_w
             log_ratio = torch.log(torch.tensor(ratio))
@@ -972,25 +979,23 @@ class TATeacherTrainer(ATeacherTrainer):
                 i = torch.randint(0, img_h - h + 1, size=(1,)).item()
                 j = torch.randint(0, img_w - w + 1, size=(1,)).item()
                 mask[i : i + h, j : j + w] = 1
-                if rects is None:
-                    rects = torch.tensor([[i + h / 2, j + w / 2, h, w]])
-                else:
-                    rects = torch.cat([rects, torch.tensor([[i + h / 2, j + w / 2, h, w]])], dim=0)
-                return mask, rects
-        return mask, rects
+                if max_rect is None or h * w > max_rect[2] * max_rect[3]:
+                    max_rect = torch.tensor([i + h / 2, j + w / 2, h, w])
+                return mask, max_rect
+        return mask, max_rect
 
     def add_cutout(self, data_q):
         for i in range(len(data_q)):
             cutout_mask = torch.zeros(data_q[i]["image"].shape[-2:], dtype=torch.bool)
-            rects = None
+            max_rect = None
             h, w = data_q[i]["image"].shape[-2:]
-            cutout_mask, rects = self.erase(h, w, 0.7, [0.05, 0.5], [0.3, 3.3], cutout_mask, rects)
-            cutout_mask, rects = self.erase(h, w, 0.5, [0.02, 0.2], [0.1, 6], cutout_mask, rects)
-            cutout_mask, rects = self.erase(h, w, 0.3, [0.02, 0.2], [0.05, 8], cutout_mask, rects)
+            cutout_mask, max_rect = self.erase(h, w, 0.7, [0.05, 0.5], [0.3, 3.3], cutout_mask, max_rect)
+            cutout_mask, max_rect = self.erase(h, w, 0.5, [0.02, 0.2], [0.1, 6], cutout_mask, max_rect)
+            cutout_mask, max_rect = self.erase(h, w, 0.3, [0.02, 0.2], [0.05, 8], cutout_mask, max_rect)
             noise = torch.randint(0, 255, data_q[i]["image"].shape, dtype=torch.uint8)
             data_q[i]["image"][cutout_mask.expand(3,-1,-1)] = noise[cutout_mask.expand(3,-1,-1)]
             data_q[i]["cutout_mask"] = cutout_mask
-            data_q[i]["rects"] = rects
+            data_q[i]["max_rect"] = max_rect
         return data_q
 
     def remove_cutout_objects(self, data_q):
@@ -1033,36 +1038,31 @@ class TATeacherTrainer(ATeacherTrainer):
     
     def paste_minority(self, unlabel_data_q):
         for i in range(len(unlabel_data_q)):
-            if unlabel_data_q[i]["rects"] is None:
-                continue
-            for rect in unlabel_data_q[i]["rects"]:
-                y_center, x_center, h, w = rect
+            c = torch.randint(len(self.major_mask), size=(1,))
+            while self.major_mask[c]:
                 c = torch.randint(len(self.major_mask), size=(1,))
-                while self.major_mask[c]:
-                    c = torch.randint(len(self.major_mask), size=(1,))
-                if len(self.crop_bank[c]) == 0:
-                    continue
-                crop = self.crop_bank[c][random.randint(0, len(self.crop_bank[c]) - 1)]
-                if h/w < 3/4 * crop.shape[-2]/crop.shape[-1]:
-                    w = h * (4/3*crop.shape[-1] / crop.shape[-2])
-                elif h/w > 4/3 * crop.shape[-2]/crop.shape[-1]:
-                    h = w * (4/3*crop.shape[-2] / crop.shape[-1])
-                ratio = random.uniform(0.5, 1.0)
-                h *= ratio
-                w *= ratio
-                y1, y2 = int(y_center - h/2), int(y_center + h/2)
-                x1, x2 = int(x_center - w/2), int(x_center + w/2)
-                noise_ratio = random.uniform(0.2, 0.7)
-                unlabel_data_q[i]["image"][:, y1:y2, x1:x2] = noise_ratio * unlabel_data_q[i]["image"][:, y1:y2, x1:x2].float() + (1 - noise_ratio) * F.interpolate(
-                    crop.unsqueeze(0).float(),
-                    size=(y2-y1, x2-x1),
-                    align_corners=False,
-                    mode="bilinear",
-                ).squeeze(0)
-                unlabel_data_q[i]["image"] = unlabel_data_q[i]["image"].byte()
-                unlabel_data_q[i]["instances"].gt_boxes.tensor = torch.cat([unlabel_data_q[i]["instances"].gt_boxes.tensor, torch.tensor([[x1, y1, x2, y2]], dtype=torch.float)], dim=0)
-                unlabel_data_q[i]["instances"].gt_classes = torch.cat([unlabel_data_q[i]["instances"].gt_classes, torch.tensor([c], dtype=torch.long)])
-            # if len(self.crop_bank[c]) != 0:
-            #     torch.save(unlabel_data_q, "unlabel_data_q.pt")
-            #     breakpoint()
+            if unlabel_data_q[i]["max_rect"] is None or len(self.crop_bank[c]) == 0:
+                continue
+            y_center, x_center, h, w = unlabel_data_q[i]["max_rect"]
+            
+            crop = self.crop_bank[c][random.randint(0, len(self.crop_bank[c]) - 1)]
+            if h/w < 3/4 * crop.shape[-2]/crop.shape[-1]:
+                w = h * (4/3*crop.shape[-1] / crop.shape[-2])
+            elif h/w > 4/3 * crop.shape[-2]/crop.shape[-1]:
+                h = w * (4/3*crop.shape[-2] / crop.shape[-1])
+            ratio = random.uniform(0.5, 1.0)
+            h *= ratio
+            w *= ratio
+            y1, y2 = int(y_center - h/2), int(y_center + h/2)
+            x1, x2 = int(x_center - w/2), int(x_center + w/2)
+            unlabel_data_q[i]["image"][:, y1:y2, x1:x2] = self.augmentation(F.interpolate(
+                crop.unsqueeze(0).float(),
+                size=(y2-y1, x2-x1),
+                align_corners=False,
+                mode="bilinear",
+            ).squeeze(0).byte())
+            unlabel_data_q[i]["instances"].gt_boxes.tensor = torch.cat([unlabel_data_q[i]["instances"].gt_boxes.tensor, torch.tensor([[x1, y1, x2, y2]], dtype=torch.float)], dim=0)
+            unlabel_data_q[i]["instances"].gt_classes = torch.cat([unlabel_data_q[i]["instances"].gt_classes, torch.tensor([c], dtype=torch.long)])
+            # torch.save(unlabel_data_q, "unlabel_data_q.pt")
+            # breakpoint()
         return unlabel_data_q
