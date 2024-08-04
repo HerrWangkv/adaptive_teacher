@@ -957,7 +957,7 @@ class TATeacherTrainer(ATeacherTrainer):
                 data_copied[i]["instances"].gt_classes = data_copied[i]["instances"].gt_classes
         return data, data_copied
     
-    def erase(self, img_h, img_w, p, scale, ratio, mask, rects):
+    def erase(self, img_h, img_w, p, scale, ratio, mask, max_rect):
         if torch.rand(1) < p:
             area = img_h * img_w
             log_ratio = torch.log(torch.tensor(ratio))
@@ -973,25 +973,23 @@ class TATeacherTrainer(ATeacherTrainer):
                 i = torch.randint(0, img_h - h + 1, size=(1,)).item()
                 j = torch.randint(0, img_w - w + 1, size=(1,)).item()
                 mask[i : i + h, j : j + w] = 1
-                if rects is None:
-                    rects = torch.tensor([[i + h / 2, j + w / 2, h, w]])
-                else:
-                    rects = torch.cat([rects, torch.tensor([[i + h / 2, j + w / 2, h, w]])], dim=0)
-                return mask, rects
-        return mask, rects
+                if max_rect is None or h * w > max_rect[2] * max_rect[3]:
+                    max_rect = torch.tensor([i + h / 2, j + w / 2, h, w])
+                return mask, max_rect
+        return mask, max_rect
 
     def add_cutout(self, data_q):
         for i in range(len(data_q)):
             cutout_mask = torch.zeros(data_q[i]["image"].shape[-2:], dtype=torch.bool)
-            rects = None
+            max_rect = None
             h, w = data_q[i]["image"].shape[-2:]
-            cutout_mask, rects = self.erase(h, w, 0.7, [0.05, 0.5], [0.3, 3.3], cutout_mask, rects)
-            cutout_mask, rects = self.erase(h, w, 0.5, [0.02, 0.2], [0.1, 6], cutout_mask, rects)
-            cutout_mask, rects = self.erase(h, w, 0.3, [0.02, 0.2], [0.05, 8], cutout_mask, rects)
+            cutout_mask, max_rect = self.erase(h, w, 0.7, [0.05, 0.5], [0.3, 3.3], cutout_mask, max_rect)
+            cutout_mask, max_rect = self.erase(h, w, 0.5, [0.02, 0.2], [0.1, 6], cutout_mask, max_rect)
+            cutout_mask, max_rect = self.erase(h, w, 0.3, [0.02, 0.2], [0.05, 8], cutout_mask, max_rect)
             noise = torch.randint(0, 255, data_q[i]["image"].shape, dtype=torch.uint8)
             data_q[i]["image"][cutout_mask.expand(3,-1,-1)] = noise[cutout_mask.expand(3,-1,-1)]
             data_q[i]["cutout_mask"] = cutout_mask
-            data_q[i]["rects"] = rects
+            data_q[i]["max_rect"] = max_rect
         return data_q
 
     def remove_cutout_objects(self, data_q):
@@ -1037,15 +1035,19 @@ class TATeacherTrainer(ATeacherTrainer):
             c = torch.randint(len(self.major_mask), size=(1,))
             while self.major_mask[c]:
                 c = torch.randint(len(self.major_mask), size=(1,))
-            if unlabel_data_q[i]["rects"] is None or len(self.crop_bank[c]) == 0:
+            if unlabel_data_q[i]["max_rect"] is None or len(self.crop_bank[c]) == 0:
                 continue
-            y_center, x_center, h, w = unlabel_data_q[i]["rects"][random.randint(0, len(unlabel_data_q[i]["rects"])-1)]
+            y_center, x_center, h, w = unlabel_data_q[i]["max_rect"]
             
             crop = self.crop_bank[c][random.randint(0, len(self.crop_bank[c]) - 1)]
-            if h/w < 3/4 * crop.shape[-2]/crop.shape[-1]:
-                w = h * (4/3*crop.shape[-1] / crop.shape[-2])
-            elif h/w > 4/3 * crop.shape[-2]/crop.shape[-1]:
-                h = w * (4/3*crop.shape[-2] / crop.shape[-1])
+            if h/w < crop.shape[-2]/crop.shape[-1]: # wider
+                crop_h = max(1, int(crop.shape[-1] * h / w))
+                crop_top = random.randint(0, crop.shape[-2] - crop_h - 1)
+                crop = crop[:, crop_top: crop_top + crop_h, :]
+            else: # higher
+                crop_w = max(1, int(crop.shape[-2] * w / h))
+                crop_left = random.randint(0, crop.shape[-1] - crop_w - 1)
+                crop = crop[:, :, crop_left: crop_left + crop_w]
             ratio = random.uniform(0.5, 1.0)
             h *= ratio
             w *= ratio
