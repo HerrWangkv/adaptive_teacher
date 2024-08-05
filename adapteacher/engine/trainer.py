@@ -1040,28 +1040,23 @@ class TATeacherTrainer(ATeacherTrainer):
             y_center, x_center, h, w = unlabel_data_q[i]["max_rect"]
             
             crop = self.crop_bank[c][random.randint(0, len(self.crop_bank[c]) - 1)]
-            if h/w < 1 / 2 * crop.shape[-2] / crop.shape[-1] or h / w > 2 * crop.shape[-2] / crop.shape[-1]:
-                continue
-            if h/w < crop.shape[-2]/crop.shape[-1]: # wider
-                crop_h = max(1, int(crop.shape[-1] * h / w))
-                crop_top = random.randint(0, crop.shape[-2] - crop_h)
-                crop = crop[:, crop_top: crop_top + crop_h, :]
-            else: # higher
-                crop_w = max(1, int(crop.shape[-2] * w / h))
-                crop_left = random.randint(0, crop.shape[-1] - crop_w)
-                crop = crop[:, :, crop_left: crop_left + crop_w]
-            ratio = random.uniform(0.5, 0.9)
+            if h/w < 3/4 * crop.shape[-2]/crop.shape[-1]:
+                w = h * (4/3*crop.shape[-1] / crop.shape[-2])
+            elif h/w > 4/3 * crop.shape[-2]/crop.shape[-1]:
+                h = w * (4/3*crop.shape[-2] / crop.shape[-1])
+            ratio = random.uniform(0.5, 1.0)
             h *= ratio
             w *= ratio
             y1, y2 = int(y_center - h/2), int(y_center + h/2)
             x1, x2 = int(x_center - w/2), int(x_center + w/2)
-            noise_ratio = random.uniform(0., 0.3)
+            noise_ratio = random.uniform(0., 0.5)
             unlabel_data_q[i]["image"][:, y1:y2, x1:x2] = noise_ratio * unlabel_data_q[i]["image"][:, y1:y2, x1:x2].float() + (1 - noise_ratio) * F.interpolate(
                 crop.unsqueeze(0).float(),
                 size=(y2-y1, x2-x1),
                 align_corners=False,
                 mode="bilinear",
             ).squeeze(0)
+            unlabel_data_q[i]["image"] = unlabel_data_q[i]["image"].byte()
             unlabel_data_q[i]["instances"].gt_boxes.tensor = torch.cat([unlabel_data_q[i]["instances"].gt_boxes.tensor, torch.tensor([[x1, y1, x2, y2]], dtype=torch.float)], dim=0)
             unlabel_data_q[i]["instances"].gt_classes = torch.cat([unlabel_data_q[i]["instances"].gt_classes, torch.tensor([c], dtype=torch.long)])
             # torch.save(unlabel_data_q, "unlabel_data_q.pt")
