@@ -799,7 +799,22 @@ class TATeacherTrainer(ATeacherTrainer):
 
         self.optimizer.zero_grad()
         losses.backward()
+        if self.iter < 100:
+            self.clip_gradient(self.model, 100.0)
         self.optimizer.step()
+
+    def clip_gradient(self, model, clip_norm):
+        """Computes a gradient clipping coefficient based on gradient norm."""
+        totalnorm = 0
+        for p in model.parameters():
+            if p.requires_grad and p.grad is not None:
+                modulenorm = p.grad.norm()
+                totalnorm += modulenorm**2
+        totalnorm = torch.sqrt(totalnorm).item()
+        norm = clip_norm / max(totalnorm, clip_norm)
+        for p in model.parameters():
+            if p.requires_grad and p.grad is not None:
+                p.grad.mul_(norm)
         
     def update_mean_objectness(self, local_objectness):
         if comm.get_world_size() > 1:
