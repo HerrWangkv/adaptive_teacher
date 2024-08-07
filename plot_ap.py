@@ -19,14 +19,18 @@ def parse_json_file(file_path):
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
-    parser.add_argument('file', type=str, help='Path to the JSON file')
+    parser.add_argument('result_dir', type=str, help='Result directory')
     args = parser.parse_args()
 
-    iters, aps = parse_json_file(args.file)
-    dir = os.path.dirname(args.file)
     fig = plt.figure(figsize=(10, 5))
-    print(max(aps))
-    plt.plot(iters, aps)
+    dir = args.result_dir
+    for file in sorted(os.listdir(dir)):
+        if file.endswith(".json"):
+            iters, aps = parse_json_file(os.path.join(dir, file))
+            label = file.split('_')[1][:-5] if '_' in file else 'ongoing'
+            print(label, max(aps) if len(aps) > 0 else 0)
+            plt.plot(iters, aps, label=label)
+    plt.legend()
     plt.xlabel('Iteration')
     plt.ylabel('AP50')
     plt.savefig(os.path.join(dir, 'ap50.png'))
