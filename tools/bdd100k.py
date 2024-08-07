@@ -142,8 +142,8 @@ def main():
     save_prefix = os.path.join(args.output_dir, "VOC2007_bdd")
     # 'daytime'
     for split in ["train", "val"]:
-        print(f"Start converting BDD100k/train/daytime")
-        bdd_to_voc(bdd_dir, save_prefix, "train", "daytime")
+        print(f"Start converting BDD100k/{split}/daytime")
+        bdd_to_voc(bdd_dir, save_prefix, split, "daytime")
 
 
 if __name__ == "__main__":
