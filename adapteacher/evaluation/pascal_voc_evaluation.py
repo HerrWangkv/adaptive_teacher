@@ -3,12 +3,14 @@
 
 import logging
 import numpy as np
+import itertools
 import os
 import tempfile
 import xml.etree.ElementTree as ET
 from collections import OrderedDict, defaultdict
 from functools import lru_cache
 import torch
+from tabulate import tabulate
 
 from detectron2.data import MetadataCatalog
 from detectron2.utils import comm
@@ -45,7 +47,7 @@ class PascalVOCDetectionEvaluator(DatasetEvaluator):
         assert meta.year in [2007, 2012], meta.year
         self._is_2007 = meta.year == 2007
         self._cpu_device = torch.device("cpu")
-        self._logger = logging.getLogger(__name__)
+        self._logger = logging.getLogger("detectron2")
 
         if target_classnames == None:
             self.target_classnames = self._class_names
@@ -117,6 +119,24 @@ class PascalVOCDetectionEvaluator(DatasetEvaluator):
 
         ret = OrderedDict()
         mAP = {iou: np.mean(x) for iou, x in aps.items()}
+
+        N_COLS = min(6, len(aps[50]) * 2)
+        results_50 = []
+        for id, name in enumerate(self._class_names):
+            results_50.append(name)
+            results_50.append(aps[50][id])
+
+        results_2d = itertools.zip_longest(
+            *[results_50[i::N_COLS] for i in range(N_COLS)]
+        )
+        table = tabulate(
+            results_2d,
+            tablefmt="pipe",
+            floatfmt=".3f",
+            headers=["category", "AP50"] * (N_COLS // 2),
+            numalign="left",
+        )
+        self._logger.info("Per-category AP50: \n" + table)
         ret["bbox"] = {"AP": np.mean(list(mAP.values())), "AP50": mAP[50], "AP75": mAP[75]}
 
         #Add the codes for AP50
