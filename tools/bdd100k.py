@@ -13,7 +13,7 @@ from PIL import Image
 from tqdm import tqdm
 
 classes = [
-    "person",
+    "pedestrian",
     "rider",
     "car",
     "truck",
@@ -141,7 +141,7 @@ def main():
     bdd_dir = os.path.join(args.input_dir, "bdd100k")
     save_prefix = os.path.join(args.output_dir, "VOC2007_bdd")
     # 'daytime'
-    for split in ["train", "val"]:
+    for split in ['val']:#["train", "val"]:
         print(f"Start converting BDD100k/{split}/daytime")
         bdd_to_voc(bdd_dir, save_prefix, split, "daytime")
 
