@@ -729,7 +729,7 @@ class TATeacherTrainer(ATeacherTrainer):
                         proposals_roih_attacked_k, _, _ = self.model_teacher(unlabel_data_k, branch="unsup_data_weak", pertubation=pertubation_k)
                     # torch.save(proposals_roih_attacked_k, "attacked_pseudo_labels.pt")
                     pseudo_proposals_roih_attacked_k, _ = self.process_pseudo_label(
-                        proposals_roih_attacked_k, cur_threshold, "roih", "thresholding"
+                        proposals_roih_attacked_k, self.cfg.SEMISUPNET.ADV_BBOX_THRESHOLD, "roih", "thresholding"
                     )
                     adversarial_pseudo_labels = self.generate_adversarial_pseudo_labels(unlabel_data_k, pseudo_proposals_roih_attacked_k)
                     # if len(pseudo_proposals_roih_attacked_k[0].gt_classes) != len(adversarial_pseudo_labels[0].gt_classes):

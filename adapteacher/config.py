@@ -24,7 +24,8 @@ def add_ateacher_config(cfg):
     # Output dimension of the MLP projector after `res5` block
     _C.SEMISUPNET.MLP_DIM = 128
     _C.SEMISUPNET.Trainer = "ateacher"
-    _C.SEMISUPNET.BBOX_THRESHOLD = 0.7
+    _C.SEMISUPNET.BBOX_THRESHOLD = 0.8
+    _C.SEMISUPNET.ADV_BBOX_THRESHOLD = 0.8
     _C.SEMISUPNET.PSEUDO_BBOX_SAMPLE = "thresholding"
     _C.SEMISUPNET.TEACHER_UPDATE_ITER = 1
     _C.SEMISUPNET.BURN_UP_STEP = 12000
