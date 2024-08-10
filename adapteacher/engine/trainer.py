@@ -753,8 +753,14 @@ class TATeacherTrainer(ATeacherTrainer):
                     )
                     unlabel_data_q = self.remove_cutout_objects(unlabel_data_q)
                     if self.cfg.SEMISUPNET.PASTE_MINORITY:
-                        print([len(c) for c in self.source_crop_bank],[len(c) for c in self.target_crop_bank])
+                        # print([len(c) for c in self.source_crop_bank],[len(c) for c in self.target_crop_bank])
                         unlabel_data_q = self.paste_minority(unlabel_data_q, target=True)
+                    # with torch.no_grad():
+                    #     proposals_roih_unsup_q, _, _ = self.model_teacher(unlabel_data_q, branch="unsup_data_weak")
+                    # torch.save(proposals_roih_unsup_q, "0/proposals_roih_unsup_q.pt")
+                    # torch.save(unlabel_data_q, "0/unlabel_data_q.pt")
+                    # breakpoint()
+
 
                     record_all_unlabel_data_adv, _, _ = self.model(
                         unlabel_data_q, branch="supervised_target"
@@ -1070,34 +1076,24 @@ class TATeacherTrainer(ATeacherTrainer):
             c = torch.randint(len(self.major_mask), size=(1,))
             while self.major_mask[c]:
                 c = torch.randint(len(self.major_mask), size=(1,))
-            if data_q[i]["max_rect"] is None or len(crop_bank[c]) <= 1:
+            if data_q[i]["max_rect"] is None or len(crop_bank[c]) == 0:
                 continue
             y_center, x_center, h, w = data_q[i]["max_rect"]
             
-            i1 = random.randint(0, len(crop_bank[c]) - 1)
-            i2 = random.randint(0, len(crop_bank[c]) - 1)
-            while i1 == i2:
-                i2 = random.randint(0, len(crop_bank[c]) - 1)
-            crop1 = crop_bank[c][i1]
-            crop2 = crop_bank[c][i2]
-            # if h/w < 3/4 * crop.shape[-2]/crop.shape[-1]:
-            #     w = h * (4/3*crop.shape[-1] / crop.shape[-2])
-            # elif h/w > 4/3 * crop.shape[-2]/crop.shape[-1]:
-            #     h = w * (4/3*crop.shape[-2] / crop.shape[-1])
+            crop = crop_bank[c][random.randint(0, len(crop_bank[c]) - 1)]
+            if h/w < 3/4 * crop.shape[-2]/crop.shape[-1]:
+                w = h * (4/3*crop.shape[-1] / crop.shape[-2])
+            elif h/w > 4/3 * crop.shape[-2]/crop.shape[-1]:
+                h = w * (4/3*crop.shape[-2] / crop.shape[-1])
             ratio = random.uniform(0.5, 1.0)
             h *= ratio
             w *= ratio
             y1, y2 = int(y_center - h/2), int(y_center + h/2)
             x1, x2 = int(x_center - w/2), int(x_center + w/2)
             # noise_ratio = random.uniform(0., 0.5)
-            crop1_ratio = random.uniform(0., 1.0)
-            data_q[i]["image"][:, y1:y2, x1:x2] = crop1_ratio * F.interpolate(
-                crop1.unsqueeze(0).float(),
-                size=(y2-y1, x2-x1),
-                align_corners=False,
-                mode="bilinear",
-            ).squeeze(0) + (1-crop1_ratio) * F.interpolate(
-                crop2.unsqueeze(0).float(),
+            flip = transforms.RandomHorizontalFlip(1.0)
+            data_q[i]["image"][:, y1:y2, x1:x2] = F.interpolate(#noise_ratio * data_q[i]["image"][:, y1:y2, x1:x2].float() + (1 - noise_ratio) * F.interpolate(
+                flip(crop).unsqueeze(0).float(),
                 size=(y2-y1, x2-x1),
                 align_corners=False,
                 mode="bilinear",
