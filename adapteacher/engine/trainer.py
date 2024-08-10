@@ -686,10 +686,10 @@ class TATeacherTrainer(ATeacherTrainer):
 
             #  1. input both strongly and weakly augmented labeled data into student model
             all_label_data = label_data_k + label_data_q
-            if self.cfg.SEMISUPNET.PASTE_MINORITY:
-                source_crops = self.crop_source(label_data_k)
-                self.source_crop_bank = self.store_crops(source_crops, target=False)
-                self.paste_minority(label_data_q, target=False)
+            # if self.cfg.SEMISUPNET.PASTE_MINORITY:
+            #     source_crops = self.crop_source(label_data_k)
+            #     self.source_crop_bank = self.store_crops(source_crops, target=False)
+            #     self.paste_minority(label_data_q, target=False)
                 
             record_all_label_data, _, local_matrix = self.model(
                 all_label_data, branch="supervised", ret_confusion_matrix=True#, pertubation=pertubation_label
@@ -753,8 +753,8 @@ class TATeacherTrainer(ATeacherTrainer):
                     )
                     unlabel_data_q = self.remove_cutout_objects(unlabel_data_q)
                     if self.cfg.SEMISUPNET.PASTE_MINORITY:
-                        unlabel_data_q = self.paste_minority(unlabel_data_q, target=True)
                         print([len(c) for c in self.source_crop_bank],[len(c) for c in self.target_crop_bank])
+                        unlabel_data_q = self.paste_minority(unlabel_data_q, target=True)
 
                     record_all_unlabel_data_adv, _, _ = self.model(
                         unlabel_data_q, branch="supervised_target"
@@ -1070,23 +1070,34 @@ class TATeacherTrainer(ATeacherTrainer):
             c = torch.randint(len(self.major_mask), size=(1,))
             while self.major_mask[c]:
                 c = torch.randint(len(self.major_mask), size=(1,))
-            if data_q[i]["max_rect"] is None or len(crop_bank[c]) == 0:
+            if data_q[i]["max_rect"] is None or len(crop_bank[c]) <= 1:
                 continue
             y_center, x_center, h, w = data_q[i]["max_rect"]
             
-            crop = crop_bank[c][random.randint(0, len(crop_bank[c]) - 1)]
-            if h/w < 3/4 * crop.shape[-2]/crop.shape[-1]:
-                w = h * (4/3*crop.shape[-1] / crop.shape[-2])
-            elif h/w > 4/3 * crop.shape[-2]/crop.shape[-1]:
-                h = w * (4/3*crop.shape[-2] / crop.shape[-1])
+            i1 = random.randint(0, len(crop_bank[c]) - 1)
+            i2 = random.randint(0, len(crop_bank[c]) - 1)
+            while i1 == i2:
+                i2 = random.randint(0, len(crop_bank[c]) - 1)
+            crop1 = crop_bank[c][i1]
+            crop2 = crop_bank[c][i2]
+            # if h/w < 3/4 * crop.shape[-2]/crop.shape[-1]:
+            #     w = h * (4/3*crop.shape[-1] / crop.shape[-2])
+            # elif h/w > 4/3 * crop.shape[-2]/crop.shape[-1]:
+            #     h = w * (4/3*crop.shape[-2] / crop.shape[-1])
             ratio = random.uniform(0.5, 1.0)
             h *= ratio
             w *= ratio
             y1, y2 = int(y_center - h/2), int(y_center + h/2)
             x1, x2 = int(x_center - w/2), int(x_center + w/2)
-            noise_ratio = random.uniform(0., 0.5)
-            data_q[i]["image"][:, y1:y2, x1:x2] = noise_ratio * data_q[i]["image"][:, y1:y2, x1:x2].float() + (1 - noise_ratio) * F.interpolate(
-                crop.unsqueeze(0).float(),
+            # noise_ratio = random.uniform(0., 0.5)
+            crop1_ratio = random.uniform(0., 1.0)
+            data_q[i]["image"][:, y1:y2, x1:x2] = crop1_ratio * F.interpolate(
+                crop1.unsqueeze(0).float(),
+                size=(y2-y1, x2-x1),
+                align_corners=False,
+                mode="bilinear",
+            ).squeeze(0) + (1-crop1_ratio) * F.interpolate(
+                crop2.unsqueeze(0).float(),
                 size=(y2-y1, x2-x1),
                 align_corners=False,
                 mode="bilinear",
