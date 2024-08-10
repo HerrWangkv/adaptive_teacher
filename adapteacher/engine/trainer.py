@@ -597,7 +597,8 @@ class TATeacherTrainer(ATeacherTrainer):
         # self.probe = OpenMatchTrainerProbe(cfg)
         self.model.apply(inplace_relu)
         self.model_teacher.apply(inplace_relu)
-        self.crop_bank = [[] for c in range(self.num_classes)]
+        self.source_crop_bank = [[] for _ in range(self.num_classes)]
+        self.target_crop_bank = [[] for _ in range(self.num_classes)]
 
     def threshold_bbox(self, proposal_bbox_inst, thres=0.7, proposal_type="roih"):
         if proposal_type == "rpn":
@@ -684,10 +685,12 @@ class TATeacherTrainer(ATeacherTrainer):
             self.update_attack_mask_and_weight()
 
             #  1. input both strongly and weakly augmented labeled data into student model
-            # pertubation_label_k, _, _ = self.model_teacher(label_data_k, branch="attack")
-            # pertubation_label_k *= self.cfg.SEMISUPNET.ATTACK_SEVERITY
             all_label_data = label_data_k + label_data_q
-            # pertubation_label = torch.cat([pertubation_label_k, torch.zeros_like(pertubation_label_k)], dim=0)
+            if self.cfg.SEMISUPNET.PASTE_MINORITY:
+                source_crops = self.crop_source(label_data_k)
+                self.source_crop_bank = self.store_crops(source_crops, target=False)
+                self.paste_minority(label_data_q, target=False)
+                
             record_all_label_data, _, local_matrix = self.model(
                 all_label_data, branch="supervised", ret_confusion_matrix=True#, pertubation=pertubation_label
             )
@@ -750,7 +753,8 @@ class TATeacherTrainer(ATeacherTrainer):
                     )
                     unlabel_data_q = self.remove_cutout_objects(unlabel_data_q)
                     if self.cfg.SEMISUPNET.PASTE_MINORITY:
-                        unlabel_data_q = self.paste_minority(unlabel_data_q)
+                        unlabel_data_q = self.paste_minority(unlabel_data_q, target=True)
+                        print([len(c) for c in self.source_crop_bank],[len(c) for c in self.target_crop_bank])
 
                     record_all_unlabel_data_adv, _, _ = self.model(
                         unlabel_data_q, branch="supervised_target"
@@ -897,20 +901,50 @@ class TATeacherTrainer(ATeacherTrainer):
             if self.cfg.SEMISUPNET.PASTE_MINORITY:
                 for j in range(len(valid_mask)):
                     if attacked_classes[j] == initial_attacked_classes[j] and ~self.major_mask[attacked_classes[j]]:
-                        box_j = attacked_boxes.tensor[j].to(torch.int)
+                        assert indices[j] != -1
+                        box_j = pseudo_boxes.tensor[indices[j]].to(torch.int)
                         x1 = box_j[0]
                         y1 = box_j[1]
                         x2 = box_j[2]
                         y2 = box_j[3]
-                        self.crop_bank[attacked_classes[j]].append(unlabel_data_k[i]["image"][:, y1:y2, x1:x2])
-                        if len(self.crop_bank[attacked_classes[j]]) > 50:
-                            self.crop_bank[attacked_classes[j]].pop(0)
+                        self.target_crop_bank[attacked_classes[j]].append(unlabel_data_k[i]["image"][:, y1:y2, x1:x2])
+                        if len(self.target_crop_bank[attacked_classes[j]]) > 50:
+                            self.target_crop_bank[attacked_classes[j]].pop(0)
             # weights = self.attack_weight[attacked_classes[valid_mask], initial_attacked_classes[valid_mask]]
             new_proposal_inst_adversarial.gt_boxes = Boxes(attacked_boxes.tensor[valid_mask])
             new_proposal_inst_adversarial.gt_classes = attacked_classes[valid_mask]
             # new_proposal_inst_adversarial.gt_weights = weights
             adversarial_pseudo_labels.append(new_proposal_inst_adversarial)
         return adversarial_pseudo_labels
+    
+    def crop_source(self, label_data_k):
+        crops = [[] for _ in range(self.num_classes)]
+        for i in range(len(label_data_k)):
+            gt_labels = label_data_k[i]["instances"]
+            for j in range(len(gt_labels)):
+                if self.major_mask[gt_labels.gt_classes[j]] or gt_labels.gt_boxes[j].area() < 100:
+                    continue
+                box_j = gt_labels.gt_boxes.tensor[j].to(torch.int)
+                x1 = box_j[0]
+                y1 = box_j[1]
+                x2 = box_j[2]
+                y2 = box_j[3]
+                crops[gt_labels.gt_classes[j]].append(label_data_k[i]["image"][:, y1:y2, x1:x2])
+        return crops
+    
+    def store_crops(self, crops, target=False):
+        if target:
+            crop_bank = self.target_crop_bank
+        else:
+            crop_bank = self.source_crop_bank
+        assert len(crops) == self.num_classes
+        for c in range(len(crops)):
+            if len(crops[c]) == 0:
+                continue
+            crop_bank[c].extend(crops[c])
+            if len(crop_bank[c]) > 50:
+                crop_bank[c] = crop_bank[c][-50:]
+        return crop_bank
     
     def resize(self, data, data_copied):
         bs = len(data)
@@ -1030,16 +1064,17 @@ class TATeacherTrainer(ATeacherTrainer):
             unlabel_data_q_copied[i]['instances'].gt_weights = weights_copied
         return unlabel_data_q, unlabel_data_q_copied
     
-    def paste_minority(self, unlabel_data_q):
-        for i in range(len(unlabel_data_q)):
+    def paste_minority(self, data_q, target):
+        crop_bank = self.target_crop_bank if target else self.source_crop_bank
+        for i in range(len(data_q)):
             c = torch.randint(len(self.major_mask), size=(1,))
             while self.major_mask[c]:
                 c = torch.randint(len(self.major_mask), size=(1,))
-            if unlabel_data_q[i]["max_rect"] is None or len(self.crop_bank[c]) == 0:
+            if data_q[i]["max_rect"] is None or len(crop_bank[c]) == 0:
                 continue
-            y_center, x_center, h, w = unlabel_data_q[i]["max_rect"]
+            y_center, x_center, h, w = data_q[i]["max_rect"]
             
-            crop = self.crop_bank[c][random.randint(0, len(self.crop_bank[c]) - 1)]
+            crop = crop_bank[c][random.randint(0, len(crop_bank[c]) - 1)]
             if h/w < 3/4 * crop.shape[-2]/crop.shape[-1]:
                 w = h * (4/3*crop.shape[-1] / crop.shape[-2])
             elif h/w > 4/3 * crop.shape[-2]/crop.shape[-1]:
@@ -1050,15 +1085,17 @@ class TATeacherTrainer(ATeacherTrainer):
             y1, y2 = int(y_center - h/2), int(y_center + h/2)
             x1, x2 = int(x_center - w/2), int(x_center + w/2)
             noise_ratio = random.uniform(0., 0.5)
-            unlabel_data_q[i]["image"][:, y1:y2, x1:x2] = noise_ratio * unlabel_data_q[i]["image"][:, y1:y2, x1:x2].float() + (1 - noise_ratio) * F.interpolate(
+            data_q[i]["image"][:, y1:y2, x1:x2] = noise_ratio * data_q[i]["image"][:, y1:y2, x1:x2].float() + (1 - noise_ratio) * F.interpolate(
                 crop.unsqueeze(0).float(),
                 size=(y2-y1, x2-x1),
                 align_corners=False,
                 mode="bilinear",
             ).squeeze(0)
-            unlabel_data_q[i]["image"] = unlabel_data_q[i]["image"].byte()
-            unlabel_data_q[i]["instances"].gt_boxes.tensor = torch.cat([unlabel_data_q[i]["instances"].gt_boxes.tensor, torch.tensor([[x1, y1, x2, y2]], dtype=torch.float)], dim=0)
-            unlabel_data_q[i]["instances"].gt_classes = torch.cat([unlabel_data_q[i]["instances"].gt_classes, torch.tensor([c], dtype=torch.long)])
-            # torch.save(unlabel_data_q, "unlabel_data_q.pt")
-            # breakpoint()
-        return unlabel_data_q
+            # data_q[i]["image"] = data_q[i]["image"].byte()
+            data_q[i]["instances"].gt_boxes.tensor = torch.cat([data_q[i]["instances"].gt_boxes.tensor, torch.tensor([[x1, y1, x2, y2]], dtype=torch.float)], dim=0)
+            data_q[i]["instances"].gt_classes = torch.cat([data_q[i]["instances"].gt_classes, torch.tensor([c], dtype=torch.long)])
+            # print("source" if not target else "target", c, len(crop_bank[c]))
+            # if target:
+            #     torch.save(data_q, "unlabel_data_q.pt")
+            #     breakpoint()
+        return data_q
