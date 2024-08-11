@@ -1090,10 +1090,9 @@ class TATeacherTrainer(ATeacherTrainer):
             w *= ratio
             y1, y2 = int(y_center - h/2), int(y_center + h/2)
             x1, x2 = int(x_center - w/2), int(x_center + w/2)
-            # noise_ratio = random.uniform(0., 0.5)
-            flip = transforms.RandomHorizontalFlip(1.0)
-            data_q[i]["image"][:, y1:y2, x1:x2] = F.interpolate(#noise_ratio * data_q[i]["image"][:, y1:y2, x1:x2].float() + (1 - noise_ratio) * F.interpolate(
-                flip(crop).unsqueeze(0).float(),
+            noise_ratio = random.uniform(0., 0.7)
+            data_q[i]["image"][:, y1:y2, x1:x2] = noise_ratio * data_q[i]["image"][:, y1:y2, x1:x2].float() + (1 - noise_ratio) * F.interpolate(
+                crop.unsqueeze(0).float(),
                 size=(y2-y1, x2-x1),
                 align_corners=False,
                 mode="bilinear",
