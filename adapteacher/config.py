@@ -18,7 +18,6 @@ def add_ateacher_config(cfg):
     _C.DATASETS.CROSS_DATASET = True
     _C.TEST.EVALUATOR = "COCOeval"
 
-
     # Semi-supervised training
     _C.SEMISUPNET = CN()
     # Output dimension of the MLP projector after `res5` block
@@ -38,15 +37,3 @@ def add_ateacher_config(cfg):
     _C.SEMISUPNET.PSEUDO_LABEL_REG = False
     _C.SEMISUPNET.PASTE_MINORITY = False
     _C.SEMISUPNET.ATTACK_SEVERITY = 0.1
-
-    # VGG
-    _C.MODEL.VGG = CN()
-    _C.MODEL.VGG.DEPTH = 16
-    _C.MODEL.VGG.OUT_FEATURES = ["vgg_block5"]
-    _C.MODEL.VGG.NORM = "BN"
-    _C.MODEL.VGG.CONV5_OUT_CHANNELS = 512
-    _C.MODEL.VGG.PRETRAIN = "./vgg16_caffe.pth"
-
-
-    _C.MODEL.RESNETS.NORM = "BN"
-    # _C.SEED = 46103230
