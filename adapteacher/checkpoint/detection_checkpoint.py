@@ -1,5 +1,5 @@
 # Copyright (c) Facebook, Inc. and its affiliates. All Rights Reserved
-from detectron2.checkpoint.c2_model_loading import align_and_update_state_dicts
+from .c2_model_loading import align_and_update_state_dicts
 from detectron2.checkpoint import DetectionCheckpointer
 
 # for load_student_model
@@ -47,7 +47,7 @@ class DetectionTSCheckpointer(DetectionCheckpointer):
                     checkpoint["model"],
                     c2_conversion=checkpoint.get("__author__", None) == "Caffe2",
                 )
-                checkpoint["model"] = model_state_dict 
+                checkpoint["model"] = model_state_dict
             # for non-caffe2 models, use standard ways to load it
             incompatible = super()._load_model(checkpoint)
 
@@ -91,6 +91,7 @@ class DetectionTSCheckpointer(DetectionCheckpointer):
             unexpected_keys=incompatible.unexpected_keys,
             incorrect_shapes=incorrect_shapes,
         )
+
     def resume_or_load(self, path: str, *, resume: bool = True) -> Dict[str, Any]:
         """
         If `resume` is True, always load checkpoint from the given path.
@@ -99,7 +100,7 @@ class DetectionTSCheckpointer(DetectionCheckpointer):
             return self.load(path)
         else:
             return self.load(path, checkpointables=[])
-        
+
 
 # class DetectionCheckpointer(Checkpointer):
 #     """
