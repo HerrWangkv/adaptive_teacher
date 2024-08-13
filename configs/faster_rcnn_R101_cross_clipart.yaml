@@ -44,7 +44,7 @@ SEMISUPNET:
   TEACHER_UPDATE_ITER: 1
   BURN_UP_STEP: 20000
   EMA_KEEP_RATE: 0.9996
-  UNSUP_LOSS_WEIGHT: 0.5 # 1.0 is suboptimal
+  UNSUP_LOSS_WEIGHT: 1.0 # 1.0 is suboptimal
   SUP_LOSS_WEIGHT: 1.0
   DIS_TYPE: "res4" #["concate","p2","multi"]
   DIS_LOSS_WEIGHT: 0.1
