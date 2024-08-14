@@ -37,3 +37,4 @@ def add_ateacher_config(cfg):
     _C.SEMISUPNET.PSEUDO_LABEL_REG = False
     _C.SEMISUPNET.PASTE_MINORITY = False
     _C.SEMISUPNET.ATTACK_SEVERITY = 0.1
+    _C.SEMISUPNET.USE_SIGN = False

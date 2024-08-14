@@ -649,7 +649,6 @@ class TATeacherTrainer(ATeacherTrainer):
         label_data_q, label_data_k, unlabel_data_q, unlabel_data_k = data
         label_data_q = self.add_cutout(label_data_q)
         label_data_q = self.remove_cutout_objects(label_data_q)
-        unlabel_data_q = self.add_cutout(unlabel_data_q)
         data_time = time.perf_counter() - start
 
         # burn-in stage (supervised training with labeled data)
@@ -662,7 +661,6 @@ class TATeacherTrainer(ATeacherTrainer):
             self._update_teacher_model(keep_rate=self.cfg.SEMISUPNET.EMA_KEEP_RATE)
 
         if self.iter < self.cfg.SEMISUPNET.BURN_UP_STEP:
-
             # input both strong and weak supervised data into model
             label_data_q.extend(label_data_k)
             record_dict, _, local_matrix = self.model(label_data_q, branch="supervised", ret_confusion_matrix=True)
@@ -676,6 +674,7 @@ class TATeacherTrainer(ATeacherTrainer):
             losses = sum(loss_dict.values())
 
         else:
+            unlabel_data_q = self.add_cutout(unlabel_data_q)
             record_dict = {}
 
             #  0. remove unlabeled data labels
@@ -726,6 +725,8 @@ class TATeacherTrainer(ATeacherTrainer):
             if self.cfg.SEMISUPNET.PSEUDO_LABEL_REG:
                 adversarial_pseudo_labels = pseudo_proposals_roih_unsup_k
                 pertubation_k, _, _ = self.model_teacher(unlabel_data_k, branch="attack")
+                if self.cfg.SEMISUPNET.USE_SIGN:
+                    pertubation_k = torch.sign(pertubation_k)
                 pertubation_k *= self.cfg.SEMISUPNET.ATTACK_SEVERITY
                 if pertubation_k.any():
                     with torch.no_grad():
@@ -735,8 +736,9 @@ class TATeacherTrainer(ATeacherTrainer):
                         proposals_roih_attacked_k, cur_threshold, "roih", "thresholding"
                     )
                     adversarial_pseudo_labels = self.generate_adversarial_pseudo_labels(unlabel_data_k, pseudo_proposals_roih_attacked_k)
-                    # if len(pseudo_proposals_roih_attacked_k[0].gt_classes) != len(adversarial_pseudo_labels[0].gt_classes):
-                    # # if 3 in pseudo_proposals_roih_attacked_k[0].gt_classes:
+                    # if len(pseudo_proposals_roih_attacked_k[0].gt_classes) != len(adversarial_pseudo_labels[0].gt_classes) or len(pseudo_proposals_roih_unsup_k[0].gt_classes) != len(adversarial_pseudo_labels[0].gt_classes):
+                    #     print(gt_labels[0].gt_classes)
+                    #     print(pseudo_proposals_roih_unsup_k[0].gt_classes)
                     #     print(pseudo_proposals_roih_attacked_k[0].gt_classes)
                     #     print(adversarial_pseudo_labels[0].gt_classes)
                     #     torch.save(gt_labels, "0/gt_labels.pt")
