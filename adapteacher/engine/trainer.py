@@ -631,7 +631,6 @@ class TATeacherTrainer(ATeacherTrainer):
             # add boxes to instances
             new_proposal_inst.gt_boxes = new_boxes
             new_proposal_inst.gt_classes = proposal_bbox_inst.pred_classes[valid_map].cpu()
-            new_proposal_inst.probs = proposal_bbox_inst.probs[valid_map].cpu()
 
         return new_proposal_inst
     
@@ -715,6 +714,10 @@ class TATeacherTrainer(ATeacherTrainer):
             )
             unlabel_data_q = self.remove_cutout_objects(unlabel_data_q)
             #  6. input strongly augmented unlabeled data into model
+            if not self.cfg.SEMISUPNET.PSEUDO_LABEL_REG and self.cfg.SEMISUPNET.PASTE_MINORITY:
+                target_crops = self.crop_target(unlabel_data_k)
+                self.target_crop_bank = self.store_crops(target_crops, target=True)
+                unlabel_data_q = self.paste_minority(unlabel_data_q, target=True)
             record_all_unlabel_data, _, _ = self.model(
                 unlabel_data_q, branch="supervised_target"
             )   
@@ -938,6 +941,21 @@ class TATeacherTrainer(ATeacherTrainer):
                 x2 = box_j[2]
                 y2 = box_j[3]
                 crops[gt_labels.gt_classes[j]].append(label_data_k[i]["image"][:, y1:y2, x1:x2])
+        return crops
+    
+    def crop_target(self, data_k):
+        crops = [[] for _ in range(self.num_classes)]
+        for i in range(len(data_k)):
+            gt_labels = data_k[i]["instances"]
+            for j in range(len(gt_labels)):
+                if self.major_mask[gt_labels.gt_classes[j]]:
+                    continue
+                box_j = gt_labels.gt_boxes.tensor[j].to(torch.int)
+                x1 = box_j[0]
+                y1 = box_j[1]
+                x2 = box_j[2]
+                y2 = box_j[3]
+                crops[gt_labels.gt_classes[j]].append(data_k[i]["image"][:, y1:y2, x1:x2])
         return crops
     
     def store_crops(self, crops, target=False):
